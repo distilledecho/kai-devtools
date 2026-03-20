@@ -1,0 +1,17 @@
+# Changes here will be overwritten by Copier
+_commit: 5.0.2
+_src_path: https://github.com/DiamondLightSource/python-copier-template.git
+author_email: hyperrealist@pm.me
+author_name: hyperrealist
+description: Observability panel for the daemon — workflows, memory, state, and inference
+    logs
+distribution_name: kai-devtools
+docker: false
+docs_type: sphinx
+git_platform: github.com
+github_org: distilledecho
+package_name: kai_devtools
+pypi: false
+repo_name: kai-devtools
+strict_typing: true
+type_checker: pyright
