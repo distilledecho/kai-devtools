@@ -26,6 +26,7 @@ from textual.widgets import (
     Footer,
     Header,
     Label,
+    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -230,7 +231,7 @@ class HoldingPanel(RefreshPanel):
     def on_mount(self) -> None:
         table = self.query_one("#holding-table", DataTable)
         table.add_columns(
-            "ID", "Type", "Urgency", "Register", "Origin", "Surfaced", "Age"
+            "ID", "Type", "Urgency", "Register", "Relevance Trigger", "Age"
         )
         self.refresh_data()
 
@@ -239,14 +240,12 @@ class HoldingPanel(RefreshPanel):
         table.clear()
         for item in self._reader.holding():
             urgency = item.get("urgency", "")
-            surfaced = "✓" if item.get("surfaced") else ""
             table.add_row(
                 _short(item.get("id")),
                 item.get("type", ""),
                 _color(urgency, _URGENCY_COLOR.get(urgency)),
                 item.get("register_needed", ""),
-                item.get("epistemic_origin", ""),
-                surfaced,
+                item.get("relevance_trigger", ""),
                 _age(item.get("created")),
             )
 
@@ -267,6 +266,7 @@ class VersionedDocPanel(RefreshPanel):
     ) -> None:
         super().__init__(reader, **kwargs)
         self._doc_name = doc_name  # "daemon_self" or "daemon_relational"
+        self._history: list[dict[str, Any]] = []
 
     def _load_current(self) -> dict[str, Any] | None:
         if self._doc_name == "daemon_self":
@@ -284,19 +284,28 @@ class VersionedDocPanel(RefreshPanel):
                 yield Label("[bold]Current version[/bold]", id="current-label")
                 yield Static("", id="current-content")
             with Vertical(id="diff-pane"):
-                yield Label("[bold]Diff against prior version[/bold]", id="diff-label")
+                yield Select(
+                    [],
+                    id="baseline-select",
+                    allow_blank=True,
+                    prompt="Select baseline version",
+                )
+                yield Label("[bold]Diff[/bold]", id="diff-label")
                 yield Static("", id="diff-content")
 
     def on_mount(self) -> None:
         self.refresh_data()
 
+    @on(Select.Changed, "#baseline-select")
+    def on_baseline_changed(self, _event: Select.Changed) -> None:
+        self._render_diff()
+
     def refresh_data(self) -> None:
         current = self._load_current()
-        history = self._load_history()
+        self._history = self._load_history()
 
         current_label = self.query_one("#current-label", Label)
         current_content = self.query_one("#current-content", Static)
-        diff_label = self.query_one("#diff-label", Label)
         diff_content = self.query_one("#diff-content", Static)
 
         if current is None:
@@ -310,20 +319,47 @@ class VersionedDocPanel(RefreshPanel):
         current_label.update(f"[bold]Current — v{ver}[/bold] ({ts})")
         current_content.update(textwrap.indent(_yaml_dump(current), "  "))
 
-        if not history:
+        select = self.query_one("#baseline-select", Select)
+        if self._history:
+            options = [
+                (f"v{h.get('version', '?')}  ({_ts(h.get('timestamp'))})", i)
+                for i, h in enumerate(self._history)
+            ]
+            select.set_options(options)
+            # Default: most recent prior version (last entry in history list).
+            # Setting select.value fires Select.Changed → on_baseline_changed
+            # → _render_diff, so no explicit _render_diff() call is needed here.
+            select.value = len(self._history) - 1
+        else:
+            select.set_options([])
+            self._render_diff()
+
+    def _render_diff(self) -> None:
+        current = self._load_current()
+        diff_label = self.query_one("#diff-label", Label)
+        diff_content = self.query_one("#diff-content", Static)
+
+        if current is None:
+            diff_content.update("(no data)")
+            return
+
+        select = self.query_one("#baseline-select", Select)
+        idx = select.value
+
+        if idx is Select.NULL or not isinstance(idx, int):
             diff_content.update("(no prior versions)")
             return
 
-        prev = history[-1]
-        prev_ver = prev.get("version", "?")
+        ver = current.get("version", "?")
+        baseline = self._history[idx]
+        prev_ver = baseline.get("version", "?")
         diff_label.update(f"[bold]Diff[/bold]: v{prev_ver} → v{ver}")
         diff_text = _unified_diff(
-            _yaml_dump(prev),
+            _yaml_dump(baseline),
             f"v{prev_ver}",
             _yaml_dump(current),
             f"v{ver}",
         )
-        # Simple coloring for +/- lines
         colored_lines: list[str] = []
         for line in diff_text.splitlines():
             if line.startswith("+") and not line.startswith("+++"):
