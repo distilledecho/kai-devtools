@@ -12,7 +12,11 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 description = "Observability panel for the daemon — workflows, memory, state, and inference logs"
-dependencies = [] # Add project dependencies here, e.g. ["click", "numpy"]
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6",
+    "textual>=0.89",
+]
 dynamic = ["version"]
 license.file = "LICENSE"
 readme = "README.md"
@@ -50,7 +54,10 @@ version_file = "src/kai_devtools/_version.py"
 
 [tool.pyright]
 typeCheckingMode = "strict"
-reportMissingImports = false # Ignore missing stubs in imported modules
+reportMissingImports = false        # Ignore missing stubs in imported modules
+reportUnknownVariableType = false   # yaml.safe_load / textual generics return Any
+reportUnknownMemberType = false     # Textual DataTable generic stubs
+reportUnknownArgumentType = false   # yaml.safe_load Any propagation
 
 [tool.pytest.ini_options]
 # Run pytest with all our checkers, and don't spam us with massive tracebacks on error

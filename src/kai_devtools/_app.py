@@ -1,0 +1,815 @@
+"""Textual TUI for the kai-devtools observability panel (§13).
+
+Thirteen surfaces across twelve tabs:
+    Workflows  Scratch  Holding  DAEMON_SELF  DAEMON_REL  Distillation
+    Threads    Push     Register  Memory       Contradictions  BORDERLINE
+
+Read surfaces auto-refresh every 10 seconds or on manual 'r' keypress.
+Write actions (contradiction resolve/dismiss, BORDERLINE promote/discard)
+are posted to the daemon action API via ActionClient — never written directly.
+"""
+
+from __future__ import annotations
+
+import difflib
+import textwrap
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import yaml
+from textual import on, work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.widgets import (
+    DataTable,
+    Footer,
+    Header,
+    Label,
+    Static,
+    TabbedContent,
+    TabPane,
+)
+
+from ._action_client import ActionClient, ActionResult
+from ._reader import DaemonStateReader
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_URGENCY_COLOR = {"high": "red", "medium": "yellow", "low": "green"}
+_STATUS_COLOR = {
+    "success": "green",
+    "failure": "red",
+    "abandoned": "yellow",
+    "active": "green",
+    "dormant": "yellow",
+    "archived": "dim",
+    "nascent": "blue",
+    "pending": "yellow",
+    "promoted": "green",
+    "discarded": "dim",
+}
+
+
+def _color(text: str, color: str | None) -> str:
+    if not color:
+        return text
+    return f"[{color}]{text}[/{color}]"
+
+
+def _ts(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return str(iso)[:16]
+
+
+def _short(s: str | None, n: int = 8) -> str:
+    if not s:
+        return "—"
+    return s[:n]
+
+
+def _age(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        delta = datetime.now(UTC) - dt
+        days = delta.days
+        if days == 0:
+            hours = delta.seconds // 3600
+            return f"{hours}h"
+        return f"{days}d"
+    except (ValueError, TypeError):
+        return "?"
+
+
+def _yaml_dump(obj: Any) -> str:
+    try:
+        return yaml.dump(
+            obj, allow_unicode=True, sort_keys=False, default_flow_style=False
+        )
+    except Exception:
+        return str(obj)
+
+
+def _unified_diff(old_text: str, old_label: str, new_text: str, new_label: str) -> str:
+    lines_old = old_text.splitlines(keepends=True)
+    lines_new = new_text.splitlines(keepends=True)
+    diff = list(
+        difflib.unified_diff(lines_old, lines_new, fromfile=old_label, tofile=new_label)
+    )
+    return "".join(diff) if diff else "(no differences)"
+
+
+# ---------------------------------------------------------------------------
+# Status bar
+# ---------------------------------------------------------------------------
+
+
+class StatusBar(Static):
+    """One-line info bar shown at the bottom of every tab."""
+
+    DEFAULT_CSS = """
+    StatusBar {
+        dock: bottom;
+        height: 1;
+        background: $panel;
+        color: $text-muted;
+        padding: 0 1;
+    }
+    """
+
+
+# ---------------------------------------------------------------------------
+# Panel base class
+# ---------------------------------------------------------------------------
+
+
+class RefreshPanel(ScrollableContainer):
+    """Base class for panels that can be refreshed from the reader."""
+
+    def __init__(self, reader: DaemonStateReader, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._reader = reader
+
+    def refresh_data(self) -> None:
+        """Called when the user presses 'r' or the auto-refresh timer fires."""
+
+
+# ---------------------------------------------------------------------------
+# 1. Workflow runs
+# ---------------------------------------------------------------------------
+
+
+class WorkflowsPanel(RefreshPanel):
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="workflows-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#workflows-table", DataTable)
+        table.add_columns(
+            "Started", "Workflow", "Trigger", "Status", "Memory", "Duration"
+        )
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        table = self.query_one("#workflows-table", DataTable)
+        table.clear()
+        runs = self._reader.workflow_runs()
+        for run in reversed(runs[-200:]):
+            status = run.get("status", "")
+            started = _ts(run.get("started_at"))
+            completed = run.get("completed_at", "")
+            try:
+                dur = ""
+                if started and completed:
+                    s = datetime.fromisoformat(run.get("started_at", ""))
+                    e = datetime.fromisoformat(completed)
+                    dur = f"{(e - s).total_seconds():.1f}s"
+            except Exception:
+                dur = ""
+            mem = "✓" if run.get("memory_server_available") else "✗"
+            table.add_row(
+                started,
+                run.get("workflow_name", ""),
+                run.get("trigger", ""),
+                _color(status, _STATUS_COLOR.get(status)),
+                mem,
+                dur,
+            )
+
+
+# ---------------------------------------------------------------------------
+# 2. Scratch space
+# ---------------------------------------------------------------------------
+
+
+class ScratchPanel(RefreshPanel):
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="scratch-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#scratch-table", DataTable)
+        table.add_columns("ID", "Type", "Lifecycle", "Origin", "Workflow", "TTL", "Age")
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        table = self.query_one("#scratch-table", DataTable)
+        table.clear()
+        for note in self._reader.scratch():
+            lc = note.get("lifecycle", "")
+            table.add_row(
+                _short(note.get("id")),
+                note.get("type", ""),
+                _color(lc, "dim" if lc == "archived" else None),
+                note.get("epistemic_origin", ""),
+                note.get("workflow_id", ""),
+                _ts(note.get("ttl")),
+                _age(note.get("timestamp")),
+            )
+
+
+# ---------------------------------------------------------------------------
+# 3. Holding store
+# ---------------------------------------------------------------------------
+
+
+class HoldingPanel(RefreshPanel):
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="holding-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#holding-table", DataTable)
+        table.add_columns(
+            "ID", "Type", "Urgency", "Register", "Origin", "Surfaced", "Age"
+        )
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        table = self.query_one("#holding-table", DataTable)
+        table.clear()
+        for item in self._reader.holding():
+            urgency = item.get("urgency", "")
+            surfaced = "✓" if item.get("surfaced") else ""
+            table.add_row(
+                _short(item.get("id")),
+                item.get("type", ""),
+                _color(urgency, _URGENCY_COLOR.get(urgency)),
+                item.get("register_needed", ""),
+                item.get("epistemic_origin", ""),
+                surfaced,
+                _age(item.get("created")),
+            )
+
+
+# ---------------------------------------------------------------------------
+# 4 & 5. Versioned YAML viewer with diff (DAEMON_SELF / DAEMON_RELATIONAL)
+# ---------------------------------------------------------------------------
+
+
+class VersionedDocPanel(RefreshPanel):
+    """Viewer for DAEMON_SELF or DAEMON_RELATIONAL with version diff."""
+
+    def __init__(
+        self,
+        reader: DaemonStateReader,
+        doc_name: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(reader, **kwargs)
+        self._doc_name = doc_name  # "daemon_self" or "daemon_relational"
+
+    def _load_current(self) -> dict[str, Any] | None:
+        if self._doc_name == "daemon_self":
+            return self._reader.daemon_self()
+        return self._reader.daemon_relational()
+
+    def _load_history(self) -> list[dict[str, Any]]:
+        if self._doc_name == "daemon_self":
+            return self._reader.daemon_self_history()
+        return self._reader.daemon_relational_history()
+
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            with Vertical(id="current-pane"):
+                yield Label("[bold]Current version[/bold]", id="current-label")
+                yield Static("", id="current-content")
+            with Vertical(id="diff-pane"):
+                yield Label("[bold]Diff against prior version[/bold]", id="diff-label")
+                yield Static("", id="diff-content")
+
+    def on_mount(self) -> None:
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        current = self._load_current()
+        history = self._load_history()
+
+        current_label = self.query_one("#current-label", Label)
+        current_content = self.query_one("#current-content", Static)
+        diff_label = self.query_one("#diff-label", Label)
+        diff_content = self.query_one("#diff-content", Static)
+
+        if current is None:
+            current_label.update("[bold]Current version[/bold] — not written yet")
+            current_content.update("(no data)")
+            diff_content.update("(no data)")
+            return
+
+        ver = current.get("version", "?")
+        ts = _ts(current.get("timestamp"))
+        current_label.update(f"[bold]Current — v{ver}[/bold] ({ts})")
+        current_content.update(textwrap.indent(_yaml_dump(current), "  "))
+
+        if not history:
+            diff_content.update("(no prior versions)")
+            return
+
+        prev = history[-1]
+        prev_ver = prev.get("version", "?")
+        diff_label.update(f"[bold]Diff[/bold]: v{prev_ver} → v{ver}")
+        diff_text = _unified_diff(
+            _yaml_dump(prev),
+            f"v{prev_ver}",
+            _yaml_dump(current),
+            f"v{ver}",
+        )
+        # Simple coloring for +/- lines
+        colored_lines: list[str] = []
+        for line in diff_text.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                colored_lines.append(f"[green]{line}[/green]")
+            elif line.startswith("-") and not line.startswith("---"):
+                colored_lines.append(f"[red]{line}[/red]")
+            elif line.startswith("@@"):
+                colored_lines.append(f"[cyan]{line}[/cyan]")
+            else:
+                colored_lines.append(line)
+        diff_content.update("\n".join(colored_lines))
+
+
+# ---------------------------------------------------------------------------
+# 6. Distillation metrics
+# ---------------------------------------------------------------------------
+
+
+class DistillationPanel(RefreshPanel):
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="distillation-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#distillation-table", DataTable)
+        table.add_columns("Cycle", "Timestamp", "DAEMON_SELF v", "Notes")
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        table = self.query_one("#distillation-table", DataTable)
+        table.clear()
+        for rec in reversed(self._reader.distillation_metrics()[-50:]):
+            notes = rec.get("notes", "")
+            # Highlight known health signals
+            for sig in ("convergence", "flattery_drift", "oscillation"):
+                if sig in notes.lower():
+                    notes = _color(notes, "yellow")
+                    break
+            table.add_row(
+                str(rec.get("cycle_number", "")),
+                _ts(rec.get("timestamp")),
+                str(rec.get("daemon_self_version", "")),
+                notes,
+            )
+
+
+# ---------------------------------------------------------------------------
+# 7. Thread stack
+# ---------------------------------------------------------------------------
+
+
+class ThreadsPanel(RefreshPanel):
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="threads-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#threads-table", DataTable)
+        table.add_columns(
+            "ID", "Title", "Status", "Epistemic", "Last touched", "Dormant since"
+        )
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        table = self.query_one("#threads-table", DataTable)
+        table.clear()
+        for t in self._reader.threads():
+            status = t.get("status", "")
+            stance = t.get("stance", {}) or {}
+            ep = stance.get("epistemic_status", "") if isinstance(stance, dict) else ""
+            table.add_row(
+                _short(t.get("id")),
+                t.get("title", ""),
+                _color(status, _STATUS_COLOR.get(status)),
+                ep,
+                _ts(t.get("last_touched")),
+                _ts(t.get("dormant_since")),
+            )
+
+
+# ---------------------------------------------------------------------------
+# 8. Push history
+# ---------------------------------------------------------------------------
+
+
+class PushHistoryPanel(RefreshPanel):
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="push-table")
+        yield Label("", id="ceiling-label")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#push-table", DataTable)
+        table.add_columns("ID", "Timestamp", "Age", "Content summary")
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        from datetime import timedelta
+
+        table = self.query_one("#push-table", DataTable)
+        label = self.query_one("#ceiling-label", Label)
+        table.clear()
+
+        records = self._reader.push_history()
+        for rec in reversed(records[-50:]):
+            table.add_row(
+                _short(rec.get("id")),
+                _ts(rec.get("timestamp")),
+                _age(rec.get("timestamp")),
+                rec.get("content_summary", ""),
+            )
+
+        # Ceiling indicator
+        within = False
+        if records:
+            try:
+                last_dt = datetime.fromisoformat(records[-1].get("timestamp", ""))
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=UTC)
+                within = (datetime.now(UTC) - last_dt) < timedelta(days=7)
+            except (ValueError, TypeError):
+                pass
+        if within:
+            label.update("[yellow]⚠ Within 7-day push ceiling[/yellow]")
+        else:
+            label.update("[green]✓ Push ceiling window clear[/green]")
+
+
+# ---------------------------------------------------------------------------
+# 9. Register inference log
+# ---------------------------------------------------------------------------
+
+
+class RegisterPanel(RefreshPanel):
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="register-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#register-table", DataTable)
+        table.add_columns("Corrected at", "Inferred", "Corrected to", "Thread ID")
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        table = self.query_one("#register-table", DataTable)
+        table.clear()
+        for entry in reversed(self._reader.register_inference()[-100:]):
+            table.add_row(
+                _ts(entry.get("corrected_at")),
+                entry.get("inferred_register", ""),
+                entry.get("corrected_register", ""),
+                _short(entry.get("thread_id"), 12),
+            )
+
+
+# ---------------------------------------------------------------------------
+# 10. Memory status (availability + backfill queue)
+# ---------------------------------------------------------------------------
+
+
+class MemoryPanel(RefreshPanel):
+    def __init__(
+        self,
+        reader: DaemonStateReader,
+        action_client: ActionClient,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(reader, **kwargs)
+        self._client = action_client
+        self._server_url = reader.memory_server_url()
+
+    def compose(self) -> ComposeResult:
+        yield Label("", id="mem-status")
+        yield Label(f"Server: {self._server_url}", id="mem-url")
+        yield Label("", id="queue-status")
+        yield DataTable(id="queue-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#queue-table", DataTable)
+        table.add_columns("File", "Age (days)", "Size (bytes)")
+        self.refresh_data()
+        self._probe_server()
+
+    def refresh_data(self) -> None:
+        queue = self._reader.embedding_backfill_queue()
+        status_label = self.query_one("#queue-status", Label)
+        table = self.query_one("#queue-table", DataTable)
+        table.clear()
+
+        if not queue:
+            status_label.update("[green]Embedding backfill queue: empty[/green]")
+        else:
+            oldest = max(e["age_days"] for e in queue)
+            status_label.update(
+                f"[yellow]Backfill queue: {len(queue)} item(s) — "
+                f"oldest {oldest:.1f} days[/yellow]"
+            )
+            for entry in queue:
+                table.add_row(
+                    entry["path"],
+                    str(entry["age_days"]),
+                    str(entry["size_bytes"]),
+                )
+
+    @work(thread=True)
+    def _probe_server(self) -> None:
+        available = self._client.check_memory_server(self._server_url)
+        label = self.query_one("#mem-status", Label)
+        if available:
+            label.update("[green]● Memory server ONLINE[/green]")
+        else:
+            label.update("[red]● Memory server OFFLINE[/red]")
+
+
+# ---------------------------------------------------------------------------
+# 11. Contradiction candidates
+# ---------------------------------------------------------------------------
+
+
+class ContradictionsPanel(RefreshPanel):
+    BINDINGS = [
+        Binding("r", "resolve_selected", "Resolve"),
+        Binding("d", "dismiss_selected", "Dismiss"),
+    ]
+
+    def __init__(
+        self,
+        reader: DaemonStateReader,
+        action_client: ActionClient,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(reader, **kwargs)
+        self._client = action_client
+
+    def compose(self) -> ComposeResult:
+        yield Label(
+            "[bold]Contradiction candidates[/bold]  [dim]r=resolve  d=dismiss[/dim]",
+        )
+        yield DataTable(id="contra-table", cursor_type="row")
+        yield Label("", id="contra-status")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#contra-table", DataTable)
+        table.add_columns(
+            "Contradiction ID", "Item ID", "Type", "Urgency", "Age", "Content"
+        )
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        table = self.query_one("#contra-table", DataTable)
+        table.clear()
+        for item in self._reader.contradiction_candidates():
+            urgency = item.get("urgency", "")
+            content = item.get("content", "")[:60]
+            table.add_row(
+                _short(item.get("contradiction_id"), 12),
+                _short(item.get("id"), 12),
+                item.get("type", ""),
+                _color(urgency, _URGENCY_COLOR.get(urgency)),
+                _age(item.get("created")),
+                content,
+                key=item.get("contradiction_id", item.get("id", "")),
+            )
+
+    def _selected_contradiction_id(self) -> str | None:
+        table = self.query_one("#contra-table", DataTable)
+        if table.cursor_row < 0:
+            return None
+        items = self._reader.contradiction_candidates()
+        if table.cursor_row >= len(items):
+            return None
+        return items[table.cursor_row].get("contradiction_id")
+
+    @work(thread=True)
+    def action_resolve_selected(self) -> None:
+        cid = self._selected_contradiction_id()
+        if not cid:
+            return
+        result = self._client.contradiction_resolve(cid)
+        self._show_result(result, cid)
+        self.refresh_data()
+
+    @work(thread=True)
+    def action_dismiss_selected(self) -> None:
+        cid = self._selected_contradiction_id()
+        if not cid:
+            return
+        result = self._client.contradiction_dismiss(cid)
+        self._show_result(result, cid)
+        self.refresh_data()
+
+    def _show_result(self, result: ActionResult, cid: str) -> None:
+        label = self.query_one("#contra-status", Label)
+        if result.ok:
+            label.update(f"[green]✓ Action applied to {cid[:12]}[/green]")
+        else:
+            label.update(f"[red]✗ Error: {result.error}[/red]")
+
+
+# ---------------------------------------------------------------------------
+# 12. BORDERLINE pool
+# ---------------------------------------------------------------------------
+
+
+class BorderlinePanel(RefreshPanel):
+    BINDINGS = [
+        Binding("p", "promote_selected", "Promote"),
+        Binding("x", "discard_selected", "Discard"),
+    ]
+
+    def __init__(
+        self,
+        reader: DaemonStateReader,
+        action_client: ActionClient,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(reader, **kwargs)
+        self._client = action_client
+
+    def compose(self) -> ComposeResult:
+        yield Label(
+            "[bold]BORDERLINE pool[/bold]  [dim]p=promote  x=discard[/dim]  "
+            "[dim](auto-expires 30 days)[/dim]",
+        )
+        yield DataTable(id="bl-table", cursor_type="row")
+        yield Label("", id="bl-status")
+        yield Static("", id="bl-detail")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#bl-table", DataTable)
+        table.add_columns("ID", "Status", "Created", "Age", "Raw output (preview)")
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        table = self.query_one("#bl-table", DataTable)
+        table.clear()
+        for item in self._reader.borderline_pool():
+            status = item.get("status", "")
+            preview = (item.get("raw_output", "") or "")[:80]
+            table.add_row(
+                _short(item.get("id"), 12),
+                _color(status, _STATUS_COLOR.get(status)),
+                _ts(item.get("created")),
+                _age(item.get("created")),
+                preview,
+                key=item.get("id", ""),
+            )
+
+    @on(DataTable.RowSelected, "#bl-table")
+    def _show_detail(self, event: DataTable.RowSelected) -> None:
+        items = self._reader.borderline_pool()
+        idx = event.cursor_row
+        if 0 <= idx < len(items):
+            detail = self.query_one("#bl-detail", Static)
+            raw = items[idx].get("raw_output", "")
+            detail.update(textwrap.fill(raw, width=100))
+
+    def _selected_item_id(self) -> str | None:
+        table = self.query_one("#bl-table", DataTable)
+        items = self._reader.borderline_pool()
+        if table.cursor_row < 0 or table.cursor_row >= len(items):
+            return None
+        return items[table.cursor_row].get("id")
+
+    @work(thread=True)
+    def action_promote_selected(self) -> None:
+        item_id = self._selected_item_id()
+        if not item_id:
+            return
+        result = self._client.borderline_promote(item_id)
+        self._show_result(result, item_id)
+        self.refresh_data()
+
+    @work(thread=True)
+    def action_discard_selected(self) -> None:
+        item_id = self._selected_item_id()
+        if not item_id:
+            return
+        result = self._client.borderline_discard(item_id)
+        self._show_result(result, item_id)
+        self.refresh_data()
+
+    def _show_result(self, result: ActionResult, item_id: str) -> None:
+        label = self.query_one("#bl-status", Label)
+        if result.ok:
+            label.update(f"[green]✓ Action applied to {item_id[:12]}[/green]")
+        else:
+            label.update(f"[red]✗ Error: {result.error}[/red]")
+
+
+# ---------------------------------------------------------------------------
+# Application
+# ---------------------------------------------------------------------------
+
+
+class KaiDevtoolsApp(App[None]):
+    """kai-devtools observability panel (§13)."""
+
+    TITLE = "kai-devtools"
+    BINDINGS = [
+        Binding("r", "refresh_all", "Refresh"),
+        Binding("q", "quit", "Quit"),
+    ]
+
+    CSS = """
+    Screen {
+        background: $surface;
+    }
+    TabbedContent {
+        height: 1fr;
+    }
+    DataTable {
+        height: 1fr;
+    }
+    VersionedDocPanel > Horizontal {
+        height: 1fr;
+    }
+    VersionedDocPanel > Horizontal > Vertical {
+        width: 1fr;
+        border: solid $panel-lighten-2;
+        overflow-y: scroll;
+    }
+    #diff-pane {
+        margin-left: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        reader: DaemonStateReader,
+        action_client: ActionClient,
+        data_dir: Path,
+    ) -> None:
+        super().__init__()
+        self._reader = reader
+        self._client = action_client
+        self._data_dir = data_dir
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with TabbedContent(
+            "Workflows",
+            "Scratch",
+            "Holding",
+            "DAEMON_SELF",
+            "DAEMON_REL",
+            "Distillation",
+            "Threads",
+            "Push",
+            "Register",
+            "Memory",
+            "Contradictions",
+            "BORDERLINE",
+        ):
+            with TabPane("Workflows", id="tab-workflows"):
+                yield WorkflowsPanel(self._reader, id="workflows-panel")
+            with TabPane("Scratch", id="tab-scratch"):
+                yield ScratchPanel(self._reader, id="scratch-panel")
+            with TabPane("Holding", id="tab-holding"):
+                yield HoldingPanel(self._reader, id="holding-panel")
+            with TabPane("DAEMON_SELF", id="tab-self"):
+                yield VersionedDocPanel(self._reader, "daemon_self", id="self-panel")
+            with TabPane("DAEMON_REL", id="tab-rel"):
+                yield VersionedDocPanel(
+                    self._reader, "daemon_relational", id="rel-panel"
+                )
+            with TabPane("Distillation", id="tab-distillation"):
+                yield DistillationPanel(self._reader, id="distillation-panel")
+            with TabPane("Threads", id="tab-threads"):
+                yield ThreadsPanel(self._reader, id="threads-panel")
+            with TabPane("Push", id="tab-push"):
+                yield PushHistoryPanel(self._reader, id="push-panel")
+            with TabPane("Register", id="tab-register"):
+                yield RegisterPanel(self._reader, id="register-panel")
+            with TabPane("Memory", id="tab-memory"):
+                yield MemoryPanel(self._reader, self._client, id="memory-panel")
+            with TabPane("Contradictions", id="tab-contradictions"):
+                yield ContradictionsPanel(
+                    self._reader, self._client, id="contradictions-panel"
+                )
+            with TabPane("BORDERLINE", id="tab-borderline"):
+                yield BorderlinePanel(self._reader, self._client, id="borderline-panel")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.sub_title = str(self._data_dir)
+        self.set_interval(10.0, self.action_refresh_all)
+
+    def action_refresh_all(self) -> None:
+        """Refresh data in all panels."""
+        for panel in self.query(RefreshPanel):
+            panel.refresh_data()
