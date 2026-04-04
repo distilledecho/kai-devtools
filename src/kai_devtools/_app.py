@@ -326,12 +326,13 @@ class VersionedDocPanel(RefreshPanel):
                 for i, h in enumerate(self._history)
             ]
             select.set_options(options)
-            # Default: most recent prior version (last entry in history list)
+            # Default: most recent prior version (last entry in history list).
+            # Setting select.value fires Select.Changed → on_baseline_changed
+            # → _render_diff, so no explicit _render_diff() call is needed here.
             select.value = len(self._history) - 1
         else:
             select.set_options([])
-
-        self._render_diff()
+            self._render_diff()
 
     def _render_diff(self) -> None:
         current = self._load_current()
@@ -345,7 +346,7 @@ class VersionedDocPanel(RefreshPanel):
         select = self.query_one("#baseline-select", Select)
         idx = select.value
 
-        if idx is Select.NULL:
+        if idx is Select.NULL or not isinstance(idx, int):
             diff_content.update("(no prior versions)")
             return
 
