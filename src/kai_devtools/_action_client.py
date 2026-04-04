@@ -50,6 +50,7 @@ class ActionClient:
     ) -> None:
         self._base = base_url.rstrip("/")
         self._timeout = timeout
+        self._http = httpx.Client(timeout=timeout)
 
     # ------------------------------------------------------------------
     # Contradiction actions
@@ -83,7 +84,7 @@ class ActionClient:
         """Return True if the daemon-memory-server responds to a probe request."""
         url = memory_server_url.rstrip("/") + _MEMORY_SERVER_PROBE_PATH
         try:
-            resp = httpx.get(url, timeout=3.0)
+            resp = self._http.get(url, timeout=3.0)
             return resp.status_code < 500
         except httpx.HTTPError:
             return False
@@ -95,7 +96,7 @@ class ActionClient:
     def _post(self, path: str) -> ActionResult:
         url = self._base + path
         try:
-            resp = httpx.post(url, timeout=self._timeout)
+            resp = self._http.post(url)
             body: dict[str, Any] = resp.json()
             return ActionResult(
                 ok=bool(body.get("ok", False)),

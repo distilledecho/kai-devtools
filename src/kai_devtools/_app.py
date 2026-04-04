@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import difflib
 import textwrap
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import yaml
@@ -419,8 +418,6 @@ class PushHistoryPanel(RefreshPanel):
         self.refresh_data()
 
     def refresh_data(self) -> None:
-        from datetime import timedelta
-
         table = self.query_one("#push-table", DataTable)
         label = self.query_one("#ceiling-label", Label)
         table.clear()
@@ -763,12 +760,10 @@ class KaiDevtoolsApp(App[None]):
         self,
         reader: DaemonStateReader,
         action_client: ActionClient,
-        data_dir: Path,
     ) -> None:
         super().__init__()
         self._reader = reader
         self._client = action_client
-        self._data_dir = data_dir
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -817,7 +812,7 @@ class KaiDevtoolsApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.sub_title = str(self._data_dir)
+        self.sub_title = str(self._reader.data_dir)
         self.set_interval(10.0, self.action_refresh_all)
 
     def action_refresh_all(self) -> None:
