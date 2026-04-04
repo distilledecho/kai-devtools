@@ -502,7 +502,6 @@ class MemoryPanel(RefreshPanel):
         table = self.query_one("#queue-table", DataTable)
         table.add_columns("File", "Age (days)", "Size (bytes)")
         self.refresh_data()
-        self._probe_server()
 
     def refresh_data(self) -> None:
         queue = self._reader.embedding_backfill_queue()
@@ -524,15 +523,22 @@ class MemoryPanel(RefreshPanel):
                     str(entry["age_days"]),
                     str(entry["size_bytes"]),
                 )
+        # Re-probe server on every refresh (fix 3: timer re-probes availability).
+        self._probe_server()
 
-    @work(thread=True)
-    def _probe_server(self) -> None:
-        available = self._client.check_memory_server(self._server_url)
+    def _update_mem_status(self, available: bool) -> None:
+        """Update the memory-server status label — must run on the main thread."""
         label = self.query_one("#mem-status", Label)
         if available:
             label.update("[green]● Memory server ONLINE[/green]")
         else:
             label.update("[red]● Memory server OFFLINE[/red]")
+
+    @work(thread=True)
+    def _probe_server(self) -> None:
+        available = self._client.check_memory_server(self._server_url)
+        # fix 1: DOM mutation must go through call_from_thread from worker thread.
+        self.app.call_from_thread(self._update_mem_status, available)
 
 
 # ---------------------------------------------------------------------------
@@ -541,8 +547,9 @@ class MemoryPanel(RefreshPanel):
 
 
 class ContradictionsPanel(RefreshPanel):
+    # fix 2: use ctrl+r so the app-level 'r' refresh binding is never shadowed.
     BINDINGS = [
-        Binding("r", "resolve_selected", "Resolve"),
+        Binding("ctrl+r", "resolve_selected", "Resolve"),
         Binding("d", "dismiss_selected", "Dismiss"),
     ]
 
@@ -557,7 +564,8 @@ class ContradictionsPanel(RefreshPanel):
 
     def compose(self) -> ComposeResult:
         yield Label(
-            "[bold]Contradiction candidates[/bold]  [dim]r=resolve  d=dismiss[/dim]",
+            "[bold]Contradiction candidates[/bold]  "
+            "[dim]ctrl+r=resolve  d=dismiss[/dim]",
         )
         yield DataTable(id="contra-table", cursor_type="row")
         yield Label("", id="contra-status")
@@ -600,8 +608,9 @@ class ContradictionsPanel(RefreshPanel):
         if not cid:
             return
         result = self._client.contradiction_resolve(cid)
-        self._show_result(result, cid)
-        self.refresh_data()
+        # fix 1: DOM mutations must go through call_from_thread from worker thread.
+        self.app.call_from_thread(self._show_result, result, cid)
+        self.app.call_from_thread(self.refresh_data)
 
     @work(thread=True)
     def action_dismiss_selected(self) -> None:
@@ -609,8 +618,8 @@ class ContradictionsPanel(RefreshPanel):
         if not cid:
             return
         result = self._client.contradiction_dismiss(cid)
-        self._show_result(result, cid)
-        self.refresh_data()
+        self.app.call_from_thread(self._show_result, result, cid)
+        self.app.call_from_thread(self.refresh_data)
 
     def _show_result(self, result: ActionResult, cid: str) -> None:
         label = self.query_one("#contra-status", Label)
@@ -626,8 +635,9 @@ class ContradictionsPanel(RefreshPanel):
 
 
 class BorderlinePanel(RefreshPanel):
+    # fix 2: use ctrl+p so the 'p' key is not silently swallowed when typing.
     BINDINGS = [
-        Binding("p", "promote_selected", "Promote"),
+        Binding("ctrl+p", "promote_selected", "Promote"),
         Binding("x", "discard_selected", "Discard"),
     ]
 
@@ -642,7 +652,7 @@ class BorderlinePanel(RefreshPanel):
 
     def compose(self) -> ComposeResult:
         yield Label(
-            "[bold]BORDERLINE pool[/bold]  [dim]p=promote  x=discard[/dim]  "
+            "[bold]BORDERLINE pool[/bold]  [dim]ctrl+p=promote  x=discard[/dim]  "
             "[dim](auto-expires 30 days)[/dim]",
         )
         yield DataTable(id="bl-table", cursor_type="row")
@@ -691,8 +701,9 @@ class BorderlinePanel(RefreshPanel):
         if not item_id:
             return
         result = self._client.borderline_promote(item_id)
-        self._show_result(result, item_id)
-        self.refresh_data()
+        # fix 1: DOM mutations must go through call_from_thread from worker thread.
+        self.app.call_from_thread(self._show_result, result, item_id)
+        self.app.call_from_thread(self.refresh_data)
 
     @work(thread=True)
     def action_discard_selected(self) -> None:
@@ -700,8 +711,8 @@ class BorderlinePanel(RefreshPanel):
         if not item_id:
             return
         result = self._client.borderline_discard(item_id)
-        self._show_result(result, item_id)
-        self.refresh_data()
+        self.app.call_from_thread(self._show_result, result, item_id)
+        self.app.call_from_thread(self.refresh_data)
 
     def _show_result(self, result: ActionResult, item_id: str) -> None:
         label = self.query_one("#bl-status", Label)
