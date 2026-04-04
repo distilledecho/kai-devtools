@@ -36,6 +36,11 @@ class DaemonStateReader:
     # ------------------------------------------------------------------
 
     @property
+    def data_dir(self) -> Path:
+        """Path to the daemon's ``data/`` directory."""
+        return self._data
+
+    @property
     def _state_dir(self) -> Path:
         return self._data / "daemon_state"
 
@@ -147,12 +152,13 @@ class DaemonStateReader:
         for path in sorted(queue_dir.iterdir()):
             if path.name.startswith("."):
                 continue
+            stat = path.stat()
             result.append(
                 {
                     "path": path.name,
-                    "size_bytes": path.stat().st_size if path.is_file() else 0,
+                    "size_bytes": stat.st_size if path.is_file() else 0,
                     "age_days": round(
-                        (datetime.now(UTC).timestamp() - path.stat().st_mtime) / 86400,
+                        (datetime.now(UTC).timestamp() - stat.st_mtime) / 86400,
                         2,
                     ),
                 }

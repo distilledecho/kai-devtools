@@ -72,7 +72,7 @@ def main(args: Sequence[str] | None = None) -> None:
 
     reader = DaemonStateReader(data_dir)
     client = ActionClient(base_url=base_url)
-    app = KaiDevtoolsApp(reader, client, data_dir)
+    app = KaiDevtoolsApp(reader, client)
     app.run()
 
 
