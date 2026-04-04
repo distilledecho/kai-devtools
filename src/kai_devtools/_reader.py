@@ -2,7 +2,7 @@
 
 Every public method reads files from the configured data directory and returns
 plain Python dicts/lists.  No method ever opens a file for writing.  This is
-enforced by the automated test in ``tests/test_no_writes.py``.
+enforced by the automated test in ``tests/test_reader.py``.
 """
 
 from __future__ import annotations
