@@ -668,9 +668,8 @@ class ContradictionsPanel(RefreshPanel):
 
 
 class BorderlinePanel(RefreshPanel):
-    # fix 2: use ctrl+p so the 'p' key is not silently swallowed when typing.
     BINDINGS = [
-        Binding("ctrl+p", "promote_selected", "Promote"),
+        Binding("p", "promote_selected", "Promote"),
         Binding("x", "discard_selected", "Discard"),
     ]
 
@@ -685,7 +684,7 @@ class BorderlinePanel(RefreshPanel):
 
     def compose(self) -> ComposeResult:
         yield Label(
-            "[bold]BORDERLINE pool[/bold]  [dim]ctrl+p=promote  x=discard[/dim]  "
+            "[bold]BORDERLINE pool[/bold]  [dim]p=promote  x=discard[/dim]  "
             "[dim](auto-expires 30 days)[/dim]",
         )
         yield DataTable(id="bl-table", cursor_type="row")
