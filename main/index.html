@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>kai_devtools &#8212; kai-devtools 0.1.dev12+g561bf2e3a documentation</title>
+    <title>kai-devtools &#8212; kai-devtools 0.1.dev15+ga730cfe8e documentation</title>
   
   
   
@@ -41,7 +41,7 @@
   <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=7f76b32a3354e82990f2" />
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=7f76b32a3354e82990f2" />
 
-    <script src="_static/documentation_options.js?v=d0f09474"></script>
+    <script src="_static/documentation_options.js?v=06991ab4"></script>
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/clipboard.min.js?v=a7894cd8"></script>
@@ -425,10 +425,64 @@
 <a class="reference external" href="https://codecov.io/gh/distilledecho/kai-devtools"><img alt="Coverage" src="https://codecov.io/gh/distilledecho/kai-devtools/branch/main/graph/badge.svg" /></a></p>
 <p><a class="reference external" href="https://www.apache.org/licenses/LICENSE-2.0"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" /></a></p>
 <section id="kai-devtools">
-<h1>kai_devtools<a class="headerlink" href="#kai-devtools" title="Link to this heading">#</a></h1>
-<p>Observability panel for the daemon — workflows, memory, state, and inference logs</p>
-<p>This is where you should write a short paragraph that describes what your module does,
-how it does it, and why people should use it.</p>
+<h1>kai-devtools<a class="headerlink" href="#kai-devtools" title="Link to this heading">#</a></h1>
+<p>Observability panel for kai-daemon — a terminal UI for inspecting every layer of the daemon’s state during development.</p>
+<section id="the-system">
+<h2>The system<a class="headerlink" href="#the-system" title="Link to this heading">#</a></h2>
+<p>Kai is a local AI system with persistent memory, a background workflow engine, and a structured inner life. It runs across two machines on the same local network:</p>
+<ul class="simple">
+<li><p><strong>Inference server</strong> — runs <code class="docutils literal notranslate"><span class="pre">mlx-kv-server</span></code> natively on Apple Silicon. Handles all inference: conversation, inner life generation, ingestion workflows, embedding generation. Runs <code class="docutils literal notranslate"><span class="pre">kai-daemon</span></code>.</p></li>
+<li><p><strong>Memory server</strong> — runs <code class="docutils literal notranslate"><span class="pre">daemon-memory-server</span></code>. Stores, indexes, and serves all persistent memory. Never initiates inference.</p></li>
+</ul>
+<p><strong>Six components:</strong></p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Component</p></th>
+<th class="head"><p>Role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mlx-kv-server</span></code></p></td>
+<td><p>Inference server (five primitives)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mlx-kv-client</span></code></p></td>
+<td><p>Thin HTTP client for mlx-kv-server</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">daemon-memory-server</span></code></p></td>
+<td><p>Memory server — episodic, artifact, and semantic APIs</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">daemon-memory-client</span></code></p></td>
+<td><p>Thin HTTP client for daemon-memory-server</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">kai-daemon</span></code></p></td>
+<td><p>The daemon itself</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">kai-devtools</span></code></p></td>
+<td><p>This tool — observability panel</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="what-kai-devtools-shows">
+<h2>What kai-devtools shows<a class="headerlink" href="#what-kai-devtools-shows" title="Link to this heading">#</a></h2>
+<p>kai-devtools is a read-only terminal UI. It never writes directly to daemon state — actions that appear to be writes (contradiction resolution, BORDERLINE promote/discard) are sent as HTTP requests to the daemon’s local action API, which performs the write.</p>
+<p>Surfaces:</p>
+<ul class="simple">
+<li><p>Workflow run history (<code class="docutils literal notranslate"><span class="pre">data/logs/workflow_runs.jsonl</span></code>) — all runs, filterable</p></li>
+<li><p>Scratch space — current items, type, TTL, epistemic origin</p></li>
+<li><p>Holding store — held items with relevance trigger, register needed, urgency</p></li>
+<li><p>DAEMON_SELF viewer + version diff against any prior version</p></li>
+<li><p>DAEMON_RELATIONAL viewer + version diff against any prior version</p></li>
+<li><p>Distillation metrics — convergence, flattery drift, oscillation</p></li>
+<li><p>Session thread stack — foreground, peripheral, and floating threads</p></li>
+<li><p>Push history — out-of-session push log with timestamps</p></li>
+<li><p>Register inference log — per-turn inference and corrections</p></li>
+<li><p>Memory server availability — live status indicator</p></li>
+<li><p>Embedding backfill queue — items pending embedding, count and age</p></li>
+<li><p>Contradiction candidate review — candidates pending human review</p></li>
+<li><p>BORDERLINE pool review — inner life outputs awaiting promote/discard; auto-expire after 30 days</p></li>
+</ul>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head text-center"><p>Source</p></th>
@@ -445,18 +499,62 @@ how it does it, and why people should use it.</p>
 </tbody>
 </table>
 </div>
-<p>This is where you should put some images or code snippets that illustrate
-some relevant examples. If it is a library then you might put some
-introductory code here:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">kai_devtools</span><span class="w"> </span><span class="kn">import</span> <span class="n">__version__</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Hello kai_devtools </span><span class="si">{</span><span class="n">__version__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</section>
+<section id="quick-start">
+<h2>Quick start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
+<p>The four services must be started in order. Steps 1–3 start the system kai-devtools observes; step 4 starts kai-devtools itself.</p>
+<section id="start-mlx-kv-server-inference-server">
+<h3>1. Start mlx-kv-server (inference server)<a class="headerlink" href="#start-mlx-kv-server-inference-server" title="Link to this heading">#</a></h3>
+<p>Must run natively on Apple Silicon — not in a devcontainer.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">mlx_kv_server</span>
 </pre></div>
 </div>
-<p>Or if it is a commandline tool then you might put some example commands here:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">kai_devtools</span> <span class="o">--</span><span class="n">version</span>
+<p>The port is configurable in <code class="docutils literal notranslate"><span class="pre">config.toml</span></code>.</p>
+</section>
+<section id="start-daemon-memory-server-memory-server">
+<h3>2. Start daemon-memory-server (memory server)<a class="headerlink" href="#start-daemon-memory-server-memory-server" title="Link to this heading">#</a></h3>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">daemon_memory_server</span> <span class="o">--</span><span class="n">host</span> <span class="n">localhost</span> <span class="o">--</span><span class="n">port</span> <span class="mi">8765</span>
 </pre></div>
 </div>
+<p>The port must match <code class="docutils literal notranslate"><span class="pre">connection.port</span></code> in <code class="docutils literal notranslate"><span class="pre">kai-daemon/daemon-memory-server.yaml</span></code>.</p>
+</section>
+<section id="start-kai-daemon-inference-server">
+<h3>3. Start kai-daemon (inference server)<a class="headerlink" href="#start-kai-daemon-inference-server" title="Link to this heading">#</a></h3>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">kai_daemon</span>
+</pre></div>
+</div>
+<p>Connection settings are configurable in <code class="docutils literal notranslate"><span class="pre">daemon-memory-server.yaml</span></code>.</p>
+</section>
+<section id="start-kai-devtools">
+<h3>4. Start kai-devtools<a class="headerlink" href="#start-kai-devtools" title="Link to this heading">#</a></h3>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">uv</span> <span class="n">run</span> <span class="n">python</span> <span class="o">-</span><span class="n">m</span> <span class="n">kai_devtools</span> <span class="o">--</span><span class="n">data</span><span class="o">-</span><span class="nb">dir</span> <span class="o">/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">kai</span><span class="o">-</span><span class="n">daemon</span><span class="o">/</span><span class="n">data</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--data-dir</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">./data</span></code></p></td>
+<td><p>Path to the daemon’s <code class="docutils literal notranslate"><span class="pre">data/</span></code> directory</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--api-host</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code></p></td>
+<td><p>Host for the daemon action API</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--api-port</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">9271</span></code></p></td>
+<td><p>Port for the daemon action API</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
 <section id="how-the-documentation-is-structured">
 <h2>How the documentation is structured<a class="headerlink" href="#how-the-documentation-is-structured" title="Link to this heading">#</a></h2>
 <p>Documentation is split into <a class="reference external" href="https://diataxis.fr">four categories</a>, also accessible from links in the top bar.</p>
