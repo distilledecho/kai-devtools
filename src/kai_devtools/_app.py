@@ -25,6 +25,7 @@ from textual.widgets import (
     DataTable,
     Footer,
     Header,
+    Input,
     Label,
     Select,
     Static,
@@ -93,6 +94,19 @@ def _age(iso: str | None) -> str:
         return "?"
 
 
+def _age_days(iso: str | None) -> float:
+    """Return age in fractional days, or 0 if unparseable."""
+    if not iso:
+        return 0.0
+    try:
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return (datetime.now(UTC) - dt).total_seconds() / 86400
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def _yaml_dump(obj: Any) -> str:
     try:
         return yaml.dump(
@@ -153,6 +167,7 @@ class RefreshPanel(ScrollableContainer):
 
 class WorkflowsPanel(RefreshPanel):
     def compose(self) -> ComposeResult:
+        yield Input(placeholder="Filter by workflow name…", id="workflows-filter")
         yield DataTable(id="workflows-table")
 
     def on_mount(self) -> None:
@@ -162,11 +177,20 @@ class WorkflowsPanel(RefreshPanel):
         )
         self.refresh_data()
 
+    @on(Input.Changed, "#workflows-filter")
+    def _on_filter_changed(self, _event: Input.Changed) -> None:
+        self.refresh_data()
+
     def refresh_data(self) -> None:
         table = self.query_one("#workflows-table", DataTable)
+        filter_input = self.query_one("#workflows-filter", Input)
+        needle = filter_input.value.lower()
         table.clear()
         runs = self._reader.workflow_runs()
         for run in reversed(runs[-200:]):
+            name = run.get("workflow_name", "")
+            if needle and needle not in name.lower():
+                continue
             status = run.get("status", "")
             started = _ts(run.get("started_at"))
             completed = run.get("completed_at", "")
@@ -181,7 +205,7 @@ class WorkflowsPanel(RefreshPanel):
             mem = "✓" if run.get("memory_server_available") else "✗"
             table.add_row(
                 started,
-                run.get("workflow_name", ""),
+                name,
                 run.get("trigger", ""),
                 _color(status, _STATUS_COLOR.get(status)),
                 mem,
@@ -701,12 +725,15 @@ class BorderlinePanel(RefreshPanel):
         table.clear()
         for item in self._reader.borderline_pool():
             status = item.get("status", "")
+            age_str = _age(item.get("created"))
+            overdue = _age_days(item.get("created")) > 30
+            age_cell = f"[red]{age_str}[/red]" if overdue else age_str
             preview = (item.get("raw_output", "") or "")[:80]
             table.add_row(
                 _short(item.get("id"), 12),
                 _color(status, _STATUS_COLOR.get(status)),
                 _ts(item.get("created")),
-                _age(item.get("created")),
+                age_cell,
                 preview,
                 key=item.get("id", ""),
             )
