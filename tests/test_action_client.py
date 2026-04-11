@@ -25,9 +25,9 @@ def stub_server(responses: _Responses) -> Iterator[str]:
     """
 
     class _Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
+        def _respond(self, path: str) -> None:
             body, status = responses.get(
-                self.path, ({"ok": False, "error": "not found"}, 404)
+                path, ({"ok": False, "error": "not found"}, 404)
             )
             data = json.dumps(body).encode()
             self.send_response(status)
@@ -35,6 +35,12 @@ def stub_server(responses: _Responses) -> Iterator[str]:
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def do_POST(self) -> None:  # noqa: N802
+            self._respond(self.path)
+
+        def do_GET(self) -> None:  # noqa: N802
+            self._respond(self.path)
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass  # suppress output during tests
@@ -148,6 +154,46 @@ def test_connection_refused_returns_error_result() -> None:
     assert result.ok is False
     assert result.http_status == 0
     assert result.error is not None
+
+
+# ---------------------------------------------------------------------------
+# fetch_kv_status
+# ---------------------------------------------------------------------------
+
+_KV_STATUS: dict[str, object] = {
+    "cache_used_tokens": 1842,
+    "cache_capacity_tokens": 8192,
+    "cache_used_fraction": 0.225,
+    "checkpoint_present": True,
+    "checkpoint_tokens": 1204,
+    "last_operation": "checkpoint",
+    "last_operation_at": "2026-04-06T21:44:01Z",
+    "model": "test-model",
+    "uptime_seconds": 3124,
+}
+
+
+def test_fetch_kv_status_success() -> None:
+    with stub_server({"/status": (_KV_STATUS, 200)}) as base_url:
+        status, connected = ActionClient(base_url=base_url).fetch_kv_status(base_url)
+    assert connected is True
+    assert status is not None
+    assert status["cache_used_tokens"] == 1842
+    assert status["checkpoint_present"] is True
+
+
+def test_fetch_kv_status_server_error() -> None:
+    with stub_server({"/status": ({"error": "internal"}, 500)}) as base_url:
+        status, connected = ActionClient(base_url=base_url).fetch_kv_status(base_url)
+    assert connected is False
+    assert status is None
+
+
+def test_fetch_kv_status_unreachable() -> None:
+    client = ActionClient(base_url="http://127.0.0.1:1", timeout=1.0)
+    status, connected = client.fetch_kv_status("http://127.0.0.1:1")
+    assert connected is False
+    assert status is None
 
 
 # ---------------------------------------------------------------------------

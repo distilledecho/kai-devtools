@@ -51,6 +51,7 @@ def test_reader_never_writes_to_data_dir(
     reader.borderline_pool()
     reader.borderline_pending()
     reader.contradiction_candidates()
+    reader.inference_calls()
     reader.memory_server_config()
     reader.memory_server_url()
 
@@ -324,6 +325,24 @@ def test_nonexistent_data_dir_returns_empty(tmp_path: Path) -> None:
     assert reader.daemon_self_history() == []
     assert reader.threads() == []
     assert reader.borderline_pool() == []
+
+
+# ---------------------------------------------------------------------------
+# Inference call log
+# ---------------------------------------------------------------------------
+
+
+def test_inference_calls_returns_entries(data_dir: Path) -> None:
+    reader = DaemonStateReader(data_dir)
+    calls = reader.inference_calls()
+    assert len(calls) == 2
+    assert calls[0]["primitive"] == "prefill"
+    assert calls[1]["primitive"] == "checkpoint"
+
+
+def test_inference_calls_empty_when_absent(tmp_path: Path) -> None:
+    reader = DaemonStateReader(tmp_path)
+    assert reader.inference_calls() == []
 
 
 # ---------------------------------------------------------------------------
