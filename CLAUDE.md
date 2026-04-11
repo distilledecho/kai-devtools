@@ -55,7 +55,9 @@ uv run ruff check .
 - `../kai-project/docs/kai-architecture.md` §4b — DAEMON_RELATIONAL schema
 - `../kai-project/docs/kai-architecture.md` §4d — holding store schema
 - `../kai-project/docs/kai-architecture.md` §4f — thread store schema
-- `../kai-project/docs/kai-technical.md` Stage 3 acceptance criteria
+- `../kai-project/docs/kai-technical.md` Stage 3 and Stage 3.5 acceptance criteria
+- `../kai-project/docs/adr-001-mlx-kv-server-status-endpoint.md` — Inference panel decision rationale
+- `../kai-project/docs/kai-tools.md` — tool catalogue, permission matrix, Kai SDK spec
 
 ## Required observability surfaces
 
@@ -77,6 +79,7 @@ complete. Every item is required — this is not a prioritised list.
 | Embedding backfill queue          | Items pending embedding, count and age                     |
 | Contradiction candidate review    | Candidates pending human review, with resolution interface |
 | BORDERLINE pool review            | Inner life outputs awaiting promote/discard decision; auto-expire after 30 days |
+| Inference panel                   | KV cache bar (fill, capacity, checkpoint marker) + `inference_calls.jsonl` operation log; added in Stage 3.5 |
 
 ## Critical constraints
 
@@ -95,11 +98,20 @@ dependency. No OpenRouter dependency.
 
 ## Stage 3 acceptance criteria
 
-- [ ] All observability surfaces listed above are present and functional
+- [ ] All observability surfaces listed above (excluding Inference panel) are present and functional
 - [ ] BORDERLINE pool: promote and discard actions work; auto-expiry confirmed at 30 days
 - [ ] Version diffs for DAEMON_SELF and DAEMON_RELATIONAL are correct
 - [ ] Contradiction candidate review interface is functional
 - [ ] No writes to daemon state from this tool (automated test asserts this)
+
+## Stage 3.5 acceptance criteria
+
+- [ ] Inference panel present between Memory and Contradictions tabs
+- [ ] Cache bar renders with correct fill level, capacity, and checkpoint marker
+- [ ] Colour transitions: green < 75%, amber 75–90%, red > 90%
+- [ ] Polls `GET /status` on mlx-kv-server at <= 5s interval
+- [ ] Degrades gracefully if mlx-kv-server is unreachable (shows last known state or disconnected indicator)
+- [ ] Operation log reads from `data/logs/inference_calls.jsonl` and is filterable by primitive type
 
 ## GitHub issue hygiene
 

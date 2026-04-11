@@ -94,6 +94,64 @@ def _age(iso: str | None) -> str:
         return "?"
 
 
+_BAR_WIDTH = 60
+
+
+def render_cache_bar(fill_frac: float, ck_frac: float | None) -> str:
+    """Build a Rich markup string for the KV cache fill bar.
+
+    Parameters
+    ----------
+    fill_frac:
+        Cache fill as a fraction in [0, 1].
+    ck_frac:
+        Checkpoint position as a fraction in [0, 1], or None if absent.
+    """
+    fill_frac = max(0.0, min(fill_frac, 1.0))
+    if fill_frac >= 0.90:
+        fill_color = "red"
+    elif fill_frac >= 0.75:
+        fill_color = "yellow"
+    else:
+        fill_color = "green"
+
+    fill_pos = round(fill_frac * _BAR_WIDTH)
+    ck_pos: int | None = None
+    if ck_frac is not None:
+        ck_pos = round(max(0.0, min(ck_frac, 1.0)) * _BAR_WIDTH)
+
+    chars: list[tuple[str, str]] = []
+    for i in range(_BAR_WIDTH):
+        if ck_pos is not None and i == ck_pos:
+            chars.append(("cyan", "│"))
+        elif i < fill_pos:
+            chars.append((fill_color, "█"))
+        else:
+            chars.append(("dim", "░"))
+
+    if not chars:
+        return ""
+    parts: list[str] = []
+    cur_color, cur_text = chars[0]
+    for color, ch in chars[1:]:
+        if color == cur_color:
+            cur_text += ch
+        else:
+            parts.append(f"[{cur_color}]{cur_text}[/{cur_color}]")
+            cur_color, cur_text = color, ch
+    parts.append(f"[{cur_color}]{cur_text}[/{cur_color}]")
+    return "".join(parts)
+
+
+def format_uptime(seconds: float) -> str:
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60}s"
+    return f"{s // 3600}h {(s % 3600) // 60}m"
+
+
 def _age_days(iso: str | None) -> float:
     """Return age in fractional days, or 0 if unparseable."""
     if not iso:
@@ -782,6 +840,136 @@ class BorderlinePanel(RefreshPanel):
 
 
 # ---------------------------------------------------------------------------
+# 13. Inference panel (Stage 3.5)
+# ---------------------------------------------------------------------------
+
+
+class InferencePanel(RefreshPanel):
+    """KV cache visualisation + inference operation log."""
+
+    _PRIMITIVE_COLOR: dict[str, str] = {
+        "prefill": "blue",
+        "generate": "green",
+        "checkpoint": "cyan",
+        "rollback": "yellow",
+        "evict": "red",
+    }
+
+    def __init__(
+        self,
+        reader: DaemonStateReader,
+        action_client: ActionClient,
+        kv_server_url: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(reader, **kwargs)
+        self._client = action_client
+        self._kv_url = kv_server_url
+        self._last_kv_status: dict[str, Any] | None = None
+        self._kv_connected: bool = False
+
+    def compose(self) -> ComposeResult:
+        yield Label("[bold]KV Cache[/bold]", id="kv-heading")
+        yield Static("", id="kv-bar")
+        yield Static("", id="kv-stats")
+        yield Label(
+            "[bold]Operation Log[/bold]  [dim](inference_calls.jsonl)[/dim]",
+            id="ops-heading",
+        )
+        yield Input(
+            placeholder="Filter by primitive…",
+            id="ops-filter",
+        )
+        yield DataTable(id="ops-table")
+        yield Label("", id="kv-conn-status")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#ops-table", DataTable)
+        table.add_columns(
+            "Timestamp", "Primitive", "Workflow", "Tokens after", "Duration ms"
+        )
+        self.refresh_data()
+        self.set_interval(5.0, self._poll_kv_status)
+
+    @on(Input.Changed, "#ops-filter")
+    def _on_filter_changed(self, _event: Input.Changed) -> None:
+        self._render_ops_table()
+
+    def refresh_data(self) -> None:
+        self._render_ops_table()
+        self._poll_kv_status()
+
+    def _render_ops_table(self) -> None:
+        table = self.query_one("#ops-table", DataTable)
+        filter_input = self.query_one("#ops-filter", Input)
+        needle = filter_input.value.strip().lower()
+        table.clear()
+        for entry in reversed(self._reader.inference_calls()[-200:]):
+            prim = entry.get("primitive", "")
+            if needle and needle not in prim.lower():
+                continue
+            prim_color = self._PRIMITIVE_COLOR.get(prim, "white")
+            wf = entry.get("workflow_id") or "—"
+            table.add_row(
+                _ts(entry.get("timestamp")),
+                _color(prim, prim_color),
+                _short(str(wf), 12),
+                str(entry.get("tokens_after", "—")),
+                str(entry.get("duration_ms", "—")),
+            )
+
+    @work(thread=True)
+    def _poll_kv_status(self) -> None:
+        status, connected = self._client.fetch_kv_status(self._kv_url)
+        self.app.call_from_thread(self._update_kv_display, status, connected)
+
+    def _update_kv_display(
+        self, status: dict[str, Any] | None, connected: bool
+    ) -> None:
+        self._kv_connected = connected
+        if status is not None:
+            self._last_kv_status = status
+
+        conn_label = self.query_one("#kv-conn-status", Label)
+        if connected:
+            conn_label.update("[green]● mlx-kv-server ONLINE[/green]")
+        else:
+            suffix = " [dim](showing last known)[/dim]" if self._last_kv_status else ""
+            conn_label.update(f"[red]● mlx-kv-server OFFLINE[/red]{suffix}")
+
+        bar_widget = self.query_one("#kv-bar", Static)
+        stats_widget = self.query_one("#kv-stats", Static)
+
+        if self._last_kv_status is None:
+            bar_widget.update("[dim]No data — mlx-kv-server not reachable[/dim]")
+            stats_widget.update("")
+            return
+
+        s = self._last_kv_status
+        used = int(s.get("cache_used_tokens", 0))
+        capacity = int(s.get("cache_capacity_tokens", 1))
+        fill_frac = float(
+            s.get("cache_used_fraction", used / capacity if capacity else 0.0)
+        )
+        ck_present = bool(s.get("checkpoint_present", False))
+        ck_tokens = int(s.get("checkpoint_tokens", 0))
+
+        ck_frac = (ck_tokens / capacity) if (ck_present and capacity > 0) else None
+        bar_widget.update(render_cache_bar(fill_frac, ck_frac))
+
+        pct = f"{fill_frac * 100:.1f}%"
+        uptime = format_uptime(float(s.get("uptime_seconds", 0)))
+        last_op = str(s.get("last_operation") or "—")
+        ck_part = (
+            f"  checkpoint @ {ck_tokens:,} tokens" if ck_present else "  no checkpoint"
+        )
+        stats_widget.update(
+            f"Used: {used:,} / {capacity:,} ({pct}){ck_part}  "
+            f"Last: {last_op}  Uptime: {uptime}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 
@@ -822,10 +1010,12 @@ class KaiDevtoolsApp(App[None]):
         self,
         reader: DaemonStateReader,
         action_client: ActionClient,
+        kv_server_url: str = "http://127.0.0.1:8080",
     ) -> None:
         super().__init__()
         self._reader = reader
         self._client = action_client
+        self._kv_server_url = kv_server_url
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -840,6 +1030,7 @@ class KaiDevtoolsApp(App[None]):
             "Push",
             "Register",
             "Memory",
+            "Inference",
             "Contradictions",
             "BORDERLINE",
         ):
@@ -865,6 +1056,13 @@ class KaiDevtoolsApp(App[None]):
                 yield RegisterPanel(self._reader, id="register-panel")
             with TabPane("Memory", id="tab-memory"):
                 yield MemoryPanel(self._reader, self._client, id="memory-panel")
+            with TabPane("Inference", id="tab-inference"):
+                yield InferencePanel(
+                    self._reader,
+                    self._client,
+                    self._kv_server_url,
+                    id="inference-panel",
+                )
             with TabPane("Contradictions", id="tab-contradictions"):
                 yield ContradictionsPanel(
                     self._reader, self._client, id="contradictions-panel"

@@ -37,6 +37,31 @@ def data_dir(tmp_path: Path) -> Path:
     }
     (logs / "workflow_runs.jsonl").write_text(json.dumps(run) + "\n")
 
+    # inference_calls.jsonl
+    inference_calls = [
+        {
+            "timestamp": "2026-04-06T21:44:01Z",
+            "primitive": "prefill",
+            "tokens_before": 0,
+            "tokens_after": 1204,
+            "duration_ms": 342,
+            "success": True,
+            "workflow_id": "wf-abc123",
+        },
+        {
+            "timestamp": "2026-04-06T21:44:02Z",
+            "primitive": "checkpoint",
+            "tokens_before": 1204,
+            "tokens_after": 1204,
+            "duration_ms": 12,
+            "success": True,
+            "workflow_id": "wf-abc123",
+        },
+    ]
+    (logs / "inference_calls.jsonl").write_text(
+        "\n".join(json.dumps(c) for c in inference_calls) + "\n"
+    )
+
     # register_inference.jsonl
     reg = {
         "corrected_at": "2026-04-04T10:00:00+00:00",

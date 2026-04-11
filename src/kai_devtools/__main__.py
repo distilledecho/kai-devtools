@@ -57,6 +57,19 @@ def main(args: Sequence[str] | None = None) -> None:
         default="127.0.0.1",
         help="Host for the daemon action API (default: 127.0.0.1).",
     )
+    parser.add_argument(
+        "--kv-port",
+        metavar="PORT",
+        type=int,
+        default=8080,
+        help="Port for the mlx-kv-server (default: 8080).",
+    )
+    parser.add_argument(
+        "--kv-host",
+        metavar="HOST",
+        default="127.0.0.1",
+        help="Host for the mlx-kv-server (default: 127.0.0.1).",
+    )
 
     parsed = parser.parse_args(args)
 
@@ -64,6 +77,7 @@ def main(args: Sequence[str] | None = None) -> None:
         Path(parsed.data_dir) if parsed.data_dir is not None else Path.cwd() / "data"
     )
     base_url = f"http://{parsed.api_host}:{parsed.api_port}"
+    kv_url = f"http://{parsed.kv_host}:{parsed.kv_port}"
 
     # Lazy imports so that tests that only parse --version never import Textual.
     from ._action_client import ActionClient
@@ -72,7 +86,7 @@ def main(args: Sequence[str] | None = None) -> None:
 
     reader = DaemonStateReader(data_dir)
     client = ActionClient(base_url=base_url)
-    app = KaiDevtoolsApp(reader, client)
+    app = KaiDevtoolsApp(reader, client, kv_server_url=kv_url)
     app.run()
 
 

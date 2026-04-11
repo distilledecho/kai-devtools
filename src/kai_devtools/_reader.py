@@ -178,6 +178,14 @@ class DaemonStateReader:
         ]
 
     # ------------------------------------------------------------------
+    # 13. Inference call log — data/logs/inference_calls.jsonl
+    # ------------------------------------------------------------------
+
+    def inference_calls(self) -> list[dict[str, Any]]:
+        """Return all inference call log entries, oldest first."""
+        return self._read_jsonl(self._logs_dir / "inference_calls.jsonl")
+
+    # ------------------------------------------------------------------
     # 12. BORDERLINE pool — data/daemon_state/borderline_pool.yaml
     # ------------------------------------------------------------------
 
