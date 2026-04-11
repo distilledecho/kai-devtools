@@ -87,15 +87,15 @@ def test_bar_checkpoint_in_empty_region() -> None:
 # ---------------------------------------------------------------------------
 
 
-def testformat_uptime_seconds() -> None:
+def test_format_uptime_seconds() -> None:
     assert format_uptime(45) == "45s"
 
 
-def testformat_uptime_minutes() -> None:
+def test_format_uptime_minutes() -> None:
     assert format_uptime(90) == "1m 30s"
 
 
-def testformat_uptime_hours() -> None:
+def test_format_uptime_hours() -> None:
     assert format_uptime(3661) == "1h 1m"
 
 

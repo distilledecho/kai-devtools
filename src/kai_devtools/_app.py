@@ -889,10 +889,7 @@ class InferencePanel(RefreshPanel):
             "Timestamp", "Primitive", "Workflow", "Tokens after", "Duration ms"
         )
         self.refresh_data()
-        self.set_interval(5.0, self._tick_kv_poll)
-
-    def _tick_kv_poll(self) -> None:
-        self._poll_kv_status()
+        self.set_interval(5.0, self._poll_kv_status)
 
     @on(Input.Changed, "#ops-filter")
     def _on_filter_changed(self, _event: Input.Changed) -> None:

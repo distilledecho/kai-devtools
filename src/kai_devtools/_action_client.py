@@ -88,7 +88,7 @@ class ActionClient:
         """
         url = kv_server_url.rstrip("/") + "/status"
         try:
-            resp = self._http.get(url, timeout=3.0)
+            resp = self._http.get(url, timeout=self._timeout)
             if resp.status_code == 200:
                 body = resp.json()
                 if isinstance(body, dict):
