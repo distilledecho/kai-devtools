@@ -123,7 +123,9 @@ def render_cache_bar(fill_frac: float, ck_frac: float | None) -> str:
     chars: list[tuple[str, str]] = []
     for i in range(_BAR_WIDTH):
         if ck_pos is not None and i == ck_pos:
-            chars.append(("cyan", "│"))
+            # magenta: visually distinct from fill colours (green/amber/red)
+            # and from the Textual default cyan used elsewhere in the panel
+            chars.append(("magenta", "│"))
         elif i < fill_pos:
             chars.append((fill_color, "█"))
         else:
@@ -859,12 +861,10 @@ class InferencePanel(RefreshPanel):
         self,
         reader: DaemonStateReader,
         action_client: ActionClient,
-        kv_server_url: str,
         **kwargs: Any,
     ) -> None:
         super().__init__(reader, **kwargs)
         self._client = action_client
-        self._kv_url = kv_server_url
         self._last_kv_status: dict[str, Any] | None = None
         self._kv_connected: bool = False
 
@@ -920,7 +920,7 @@ class InferencePanel(RefreshPanel):
 
     @work(thread=True)
     def _poll_kv_status(self) -> None:
-        status, connected = self._client.fetch_kv_status(self._kv_url)
+        status, connected = self._client.fetch_kv_status()
         self.app.call_from_thread(self._update_kv_display, status, connected)
 
     def _update_kv_display(
@@ -1010,12 +1010,10 @@ class KaiDevtoolsApp(App[None]):
         self,
         reader: DaemonStateReader,
         action_client: ActionClient,
-        kv_server_url: str = "http://127.0.0.1:8080",
     ) -> None:
         super().__init__()
         self._reader = reader
         self._client = action_client
-        self._kv_server_url = kv_server_url
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1060,7 +1058,6 @@ class KaiDevtoolsApp(App[None]):
                 yield InferencePanel(
                     self._reader,
                     self._client,
-                    self._kv_server_url,
                     id="inference-panel",
                 )
             with TabPane("Contradictions", id="tab-contradictions"):

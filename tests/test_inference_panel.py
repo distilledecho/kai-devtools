@@ -38,7 +38,7 @@ def test_bar_red_above_90() -> None:
 
 def test_bar_checkpoint_marker_present() -> None:
     bar = render_cache_bar(0.50, 0.30)
-    assert "cyan" in bar
+    assert "magenta" in bar
     assert "│" in bar
 
 
@@ -78,7 +78,7 @@ def test_bar_exactly_at_90_threshold() -> None:
 def test_bar_checkpoint_in_empty_region() -> None:
     # ck_frac > fill_frac: checkpoint marker appears in the empty area
     bar = render_cache_bar(0.20, 0.50)
-    assert "cyan" in bar
+    assert "magenta" in bar
     assert "│" in bar
 
 
@@ -124,7 +124,7 @@ class _MockClient(ActionClient):
         self._mock_status = status
         self._mock_connected = connected
 
-    def fetch_kv_status(self, kv_server_url: str) -> tuple[dict[str, Any] | None, bool]:
+    def fetch_kv_status(self) -> tuple[dict[str, Any] | None, bool]:
         return self._mock_status, self._mock_connected
 
 
@@ -138,7 +138,6 @@ class _InferencePanelApp(App[None]):
         yield InferencePanel(
             self._reader,
             self._client,
-            "http://127.0.0.1:8080",
             id="panel",
         )
 
