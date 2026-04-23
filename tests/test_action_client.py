@@ -174,8 +174,8 @@ _KV_STATUS: dict[str, object] = {
 
 
 def test_fetch_kv_status_success() -> None:
-    with stub_server({"/status": (_KV_STATUS, 200)}) as base_url:
-        status, connected = ActionClient(base_url=base_url).fetch_kv_status(base_url)
+    with stub_server({"/status/kv": (_KV_STATUS, 200)}) as base_url:
+        status, connected = ActionClient(base_url=base_url).fetch_kv_status()
     assert connected is True
     assert status is not None
     assert status["cache_used_tokens"] == 1842
@@ -183,15 +183,15 @@ def test_fetch_kv_status_success() -> None:
 
 
 def test_fetch_kv_status_server_error() -> None:
-    with stub_server({"/status": ({"error": "internal"}, 500)}) as base_url:
-        status, connected = ActionClient(base_url=base_url).fetch_kv_status(base_url)
+    with stub_server({"/status/kv": ({"error": "internal"}, 500)}) as base_url:
+        status, connected = ActionClient(base_url=base_url).fetch_kv_status()
     assert connected is False
     assert status is None
 
 
 def test_fetch_kv_status_unreachable() -> None:
     client = ActionClient(base_url="http://127.0.0.1:1", timeout=1.0)
-    status, connected = client.fetch_kv_status("http://127.0.0.1:1")
+    status, connected = client.fetch_kv_status()
     assert connected is False
     assert status is None
 

@@ -77,16 +77,16 @@ class ActionClient:
         return self._post(f"/actions/borderline/{item_id}/discard")
 
     # ------------------------------------------------------------------
-    # mlx-kv-server status poll (read-only GET)
+    # KV status poll via daemon status proxy (read-only GET)
     # ------------------------------------------------------------------
 
-    def fetch_kv_status(self, kv_server_url: str) -> tuple[dict[str, Any] | None, bool]:
-        """GET /status from mlx-kv-server.
+    def fetch_kv_status(self) -> tuple[dict[str, Any] | None, bool]:
+        """GET /status/kv from the daemon status proxy.
 
         Returns ``(status_dict, True)`` on success, ``(None, False)`` if the
         server is unreachable or returns an unexpected response.
         """
-        url = kv_server_url.rstrip("/") + "/status"
+        url = self._base + "/status/kv"
         try:
             resp = self._http.get(url, timeout=self._timeout)
             if resp.status_code == 200:
