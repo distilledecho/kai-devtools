@@ -123,6 +123,8 @@ def render_cache_bar(fill_frac: float, ck_frac: float | None) -> str:
     chars: list[tuple[str, str]] = []
     for i in range(_BAR_WIDTH):
         if ck_pos is not None and i == ck_pos:
+            # magenta: visually distinct from fill colours (green/amber/red)
+            # and from the Textual default cyan used elsewhere in the panel
             chars.append(("magenta", "│"))
         elif i < fill_pos:
             chars.append((fill_color, "█"))
