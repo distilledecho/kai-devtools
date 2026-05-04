@@ -79,7 +79,7 @@ complete. Every item is required — this is not a prioritised list.
 | Embedding backfill queue          | Items pending embedding, count and age                     |
 | Contradiction candidate review    | Candidates pending human review, with resolution interface |
 | BORDERLINE pool review            | Inner life outputs awaiting promote/discard decision; auto-expire after 30 days |
-| Inference panel                   | KV cache bar (fill, capacity, checkpoint marker) + `inference_calls.jsonl` operation log; added in Stage 3.5 |
+| Inference panel                   | KV cache bar (fill, capacity, checkpoint marker) + `inference_calls.jsonl` operation log; polls GET /status/kv on kai-daemon proxy (not mlx-kv-server directly); added in Stage 3.5 |
 
 ## Critical constraints
 
@@ -109,7 +109,7 @@ dependency. No OpenRouter dependency.
 - [ ] Inference panel present between Memory and Contradictions tabs
 - [ ] Cache bar renders with correct fill level, capacity, and checkpoint marker
 - [ ] Colour transitions: green < 75%, amber 75–90%, red > 90%
-- [ ] Polls `GET /status` on mlx-kv-server at <= 5s interval
+- [ ] Polls `GET /status/kv` on kai-daemon proxy at <= 5s interval (kai-devtools never connects to mlx-kv-server directly)
 - [ ] Degrades gracefully if mlx-kv-server is unreachable (shows last known state or disconnected indicator)
 - [ ] Operation log reads from `data/logs/inference_calls.jsonl` and is filterable by primitive type
 
