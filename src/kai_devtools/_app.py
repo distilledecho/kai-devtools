@@ -1140,7 +1140,7 @@ class ChatPanel(Vertical):
             lines = ["[bold]Active threads:[/bold]"]
             for t in active:
                 title = escape(str(t.get("title", "—")))
-                lines.append(f"  {title} [active]")
+                lines.append(f"  {title} (active)")
             self.query_one("#chat-threads", Static).update("\n".join(lines))
         else:
             self.query_one("#chat-threads", Static).update(

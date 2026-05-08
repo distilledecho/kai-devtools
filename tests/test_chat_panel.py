@@ -251,3 +251,27 @@ def test_input_initially_enabled(data_dir: Path) -> None:
             assert not gen.display
 
     asyncio.run(run())
+
+
+def test_active_thread_in_state_pane_no_markup_error(data_dir: Path) -> None:
+    """State pane renders active threads without raising MarkupError.
+
+    The conftest fixture includes one active thread ("The question of presence").
+    Previously the label used [active] as a Rich tag, which is not a valid style
+    and raises MarkupError. This test ensures the panel mounts cleanly and
+    displays the thread title.
+    """
+
+    async def run() -> None:
+        app = _ChatApp(DaemonStateReader(data_dir))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            panel = pilot.app.query_one("#panel", ChatPanel)
+            # Wait for the worker started by on_mount to complete and update UI
+            threads_widget = panel.query_one("#chat-threads", Static)
+            rendered = await _poll_for(
+                lambda: "question of presence" in str(threads_widget.render())
+            )
+            assert rendered, "Active thread title not shown in state pane"
+
+    asyncio.run(run())
