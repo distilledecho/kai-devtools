@@ -1,8 +1,10 @@
 """Textual TUI for the kai-devtools observability panel (§13).
 
-Thirteen surfaces across twelve tabs:
-    Workflows  Scratch  Holding  DAEMON_SELF  DAEMON_REL  Distillation
-    Threads    Push     Register  Memory       Contradictions  BORDERLINE
+Thirteen observability surfaces across thirteen tabs, plus one interactive
+Chat tab (first/leftmost):
+
+    Chat       Workflows  Scratch  Holding  DAEMON_SELF  DAEMON_REL  Distillation
+    Threads    Push       Register  Memory   Inference    Contradictions  BORDERLINE
 
 Read surfaces auto-refresh every 10 seconds or on manual 'r' keypress.
 Write actions (contradiction resolve/dismiss, BORDERLINE promote/discard)
@@ -12,11 +14,14 @@ are posted to the daemon action API via ActionClient — never written directly.
 from __future__ import annotations
 
 import difflib
+import json
 import textwrap
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import yaml
+from rich.markup import escape
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -35,6 +40,8 @@ from textual.widgets import (
 
 from ._action_client import ActionClient, ActionResult
 from ._reader import DaemonStateReader
+
+DEFAULT_CONV_URL = "http://localhost:9272"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -970,6 +977,209 @@ class InferencePanel(RefreshPanel):
 
 
 # ---------------------------------------------------------------------------
+# 14. Chat panel
+# ---------------------------------------------------------------------------
+
+
+def format_chat_message(role: str, content: str) -> str:
+    """Return a Rich-markup string for one conversation turn."""
+    safe = escape(content)
+    if role == "user":
+        return f"[bold cyan]You:[/bold cyan] {safe}"
+    return f"[bold magenta]Kai:[/bold magenta] {safe}"
+
+
+class ChatPanel(Vertical):
+    """Two-pane chat interface: conversation history (left) + live state (right)."""
+
+    DEFAULT_CSS = """
+    ChatPanel {
+        height: 1fr;
+    }
+    ChatPanel > Horizontal {
+        height: 1fr;
+    }
+    #chat-left {
+        width: 65%;
+        border: solid $panel-lighten-2;
+    }
+    #chat-right {
+        width: 35%;
+        border: solid $panel-lighten-2;
+        padding: 0 1;
+        overflow-y: auto;
+    }
+    #chat-history {
+        height: 1fr;
+    }
+    #chat-generating {
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        reader: DaemonStateReader,
+        conv_url: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._reader = reader
+        self._conv_url = conv_url
+        self._history: list[dict[str, str]] = []
+
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            with Vertical(id="chat-left"):
+                with ScrollableContainer(id="chat-history"):
+                    pass
+                yield Static("[dim]generating…[/dim]", id="chat-generating")
+                yield Input(
+                    placeholder="Type a message and press Enter…",
+                    id="chat-input",
+                )
+            with Vertical(id="chat-right"):
+                yield Label("[bold]Session State[/bold]")
+                yield Static("", id="chat-register")
+                yield Static("", id="chat-threads")
+                yield Static("", id="chat-fascinations")
+                yield Static("", id="chat-holding")
+
+    def on_mount(self) -> None:
+        self.query_one("#chat-generating", Static).display = False
+        self._refresh_state_pane()
+
+    @on(Input.Submitted, "#chat-input")
+    def _on_submit(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        if not text:
+            return
+        inp = self.query_one("#chat-input", Input)
+        inp.clear()
+        inp.disabled = True
+        self.query_one("#chat-generating", Static).display = True
+        self._history.append({"role": "user", "content": text})
+        history = self.query_one("#chat-history", ScrollableContainer)
+        history.mount(Static(format_chat_message("user", text)))
+        self._scroll_to_bottom()
+        self._send_message(list(self._history))
+
+    @work(thread=True)
+    def _send_message(self, messages: list[dict[str, str]]) -> None:
+        payload = json.dumps({"model": "kai", "messages": messages}).encode()
+        try:
+            req = urllib.request.Request(
+                f"{self._conv_url}/v1/chat/completions",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                body = resp.read()
+            data = json.loads(body)
+            reply = str(data["choices"][0]["message"]["content"])
+            self.app.call_from_thread(self._on_reply, reply)
+        except Exception as exc:
+            self.app.call_from_thread(self._on_error, str(exc))
+
+    def _on_reply(self, content: str) -> None:
+        self._history.append({"role": "assistant", "content": content})
+        history = self.query_one("#chat-history", ScrollableContainer)
+        history.mount(Static(format_chat_message("assistant", content)))
+        self._scroll_to_bottom()
+        self._refresh_state_pane()
+        self.query_one("#chat-input", Input).disabled = False
+        self.query_one("#chat-generating", Static).display = False
+
+    def _on_error(self, error: str) -> None:
+        history = self.query_one("#chat-history", ScrollableContainer)
+        history.mount(Static(f"[red]Error: {escape(error)}[/red]"))
+        self._scroll_to_bottom()
+        self.query_one("#chat-input", Input).disabled = False
+        self.query_one("#chat-generating", Static).display = False
+
+    def _scroll_to_bottom(self) -> None:
+        self.query_one("#chat-history", ScrollableContainer).scroll_end(animate=False)
+
+    @work(thread=True)
+    def _refresh_state_pane(self) -> None:
+        entries = self._reader.register_inference()
+        threads = self._reader.threads()
+        ds = self._reader.daemon_self()
+        holding = self._reader.holding()
+        self.app.call_from_thread(
+            self._update_state_pane, entries, threads, ds, holding
+        )
+
+    def _update_state_pane(
+        self,
+        entries: list[dict[str, Any]],
+        threads: list[dict[str, Any]],
+        ds: dict[str, Any] | None,
+        holding: list[dict[str, Any]],
+    ) -> None:
+        if entries:
+            last = entries[-1]
+            inferred = escape(str(last.get("inferred_register", "—")))
+            corrected = last.get("corrected_register")
+            if corrected:
+                reg_text = (
+                    f"[bold]Register:[/bold] {inferred} → {escape(str(corrected))}"
+                    " [dim](corrected)[/dim]"
+                )
+            else:
+                reg_text = f"[bold]Register:[/bold] {inferred}"
+        else:
+            reg_text = "[bold]Register:[/bold] [dim]—[/dim]"
+        self.query_one("#chat-register", Static).update(reg_text)
+
+        active = [t for t in threads if t.get("status") == "active"]
+        if active:
+            lines = ["[bold]Active threads:[/bold]"]
+            for t in active:
+                title = escape(str(t.get("title", "—")))
+                lines.append(f"  {title} (active)")
+            self.query_one("#chat-threads", Static).update("\n".join(lines))
+        else:
+            self.query_one("#chat-threads", Static).update(
+                "[bold]Active threads:[/bold] [dim]none[/dim]"
+            )
+
+        if ds:
+            fascs = ds.get("current_fascinations") or []
+            topics = (
+                [escape(str(f.get("topic", str(f)))) for f in fascs] if fascs else []
+            )
+            fasc_text = (
+                "[bold]Fascinations:[/bold] " + ", ".join(topics)
+                if topics
+                else "[bold]Fascinations:[/bold] [dim]none[/dim]"
+            )
+        else:
+            fasc_text = "[bold]Fascinations:[/bold] [dim]—[/dim]"
+        self.query_one("#chat-fascinations", Static).update(fasc_text)
+
+        total = len(holding)
+        if total > 0:
+            counts: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+            for item in holding:
+                urgency = item.get("urgency", "")
+                if urgency in counts:
+                    counts[urgency] += 1
+            hold_text = (
+                f"[bold]Holding:[/bold] {total} item(s)  "
+                f"[red]H:{counts['high']}[/red] "
+                f"[yellow]M:{counts['medium']}[/yellow] "
+                f"[green]L:{counts['low']}[/green]"
+            )
+        else:
+            hold_text = "[bold]Holding:[/bold] [dim]empty[/dim]"
+        self.query_one("#chat-holding", Static).update(hold_text)
+
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 
@@ -1010,14 +1220,17 @@ class KaiDevtoolsApp(App[None]):
         self,
         reader: DaemonStateReader,
         action_client: ActionClient,
+        conv_url: str = DEFAULT_CONV_URL,
     ) -> None:
         super().__init__()
         self._reader = reader
         self._client = action_client
+        self._conv_url = conv_url
 
     def compose(self) -> ComposeResult:
         yield Header()
         with TabbedContent(
+            "Chat",
             "Workflows",
             "Scratch",
             "Holding",
@@ -1032,6 +1245,8 @@ class KaiDevtoolsApp(App[None]):
             "Contradictions",
             "BORDERLINE",
         ):
+            with TabPane("Chat", id="tab-chat"):
+                yield ChatPanel(self._reader, self._conv_url, id="chat-panel")
             with TabPane("Workflows", id="tab-workflows"):
                 yield WorkflowsPanel(self._reader, id="workflows-panel")
             with TabPane("Scratch", id="tab-scratch"):
