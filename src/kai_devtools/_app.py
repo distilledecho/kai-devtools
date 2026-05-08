@@ -1,6 +1,8 @@
 """Textual TUI for the kai-devtools observability panel (§13).
 
-Fourteen surfaces across fourteen tabs:
+Thirteen observability surfaces across thirteen tabs, plus one interactive
+Chat tab (first/leftmost):
+
     Chat       Workflows  Scratch  Holding  DAEMON_SELF  DAEMON_REL  Distillation
     Threads    Push       Register  Memory   Inference    Contradictions  BORDERLINE
 
@@ -19,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import yaml
+from rich.markup import escape
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -37,6 +40,8 @@ from textual.widgets import (
 
 from ._action_client import ActionClient, ActionResult
 from ._reader import DaemonStateReader
+
+DEFAULT_CONV_URL = "http://localhost:9272"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -978,9 +983,10 @@ class InferencePanel(RefreshPanel):
 
 def format_chat_message(role: str, content: str) -> str:
     """Return a Rich-markup string for one conversation turn."""
+    safe = escape(content)
     if role == "user":
-        return f"[bold cyan]You:[/bold cyan] {content}"
-    return f"[bold magenta]Kai:[/bold magenta] {content}"
+        return f"[bold cyan]You:[/bold cyan] {safe}"
+    return f"[bold magenta]Kai:[/bold magenta] {safe}"
 
 
 class ChatPanel(Vertical):
@@ -1089,7 +1095,7 @@ class ChatPanel(Vertical):
 
     def _on_error(self, error: str) -> None:
         history = self.query_one("#chat-history", ScrollableContainer)
-        history.mount(Static(f"[red]Error: {error}[/red]"))
+        history.mount(Static(f"[red]Error: {escape(error)}[/red]"))
         self._scroll_to_bottom()
         self.query_one("#chat-input", Input).disabled = False
         self.query_one("#chat-generating", Static).display = False
@@ -1097,15 +1103,30 @@ class ChatPanel(Vertical):
     def _scroll_to_bottom(self) -> None:
         self.query_one("#chat-history", ScrollableContainer).scroll_end(animate=False)
 
+    @work(thread=True)
     def _refresh_state_pane(self) -> None:
         entries = self._reader.register_inference()
+        threads = self._reader.threads()
+        ds = self._reader.daemon_self()
+        holding = self._reader.holding()
+        self.app.call_from_thread(
+            self._update_state_pane, entries, threads, ds, holding
+        )
+
+    def _update_state_pane(
+        self,
+        entries: list[dict[str, Any]],
+        threads: list[dict[str, Any]],
+        ds: dict[str, Any] | None,
+        holding: list[dict[str, Any]],
+    ) -> None:
         if entries:
             last = entries[-1]
-            inferred = last.get("inferred_register", "—")
+            inferred = escape(str(last.get("inferred_register", "—")))
             corrected = last.get("corrected_register")
             if corrected:
                 reg_text = (
-                    f"[bold]Register:[/bold] {inferred} → {corrected}"
+                    f"[bold]Register:[/bold] {inferred} → {escape(str(corrected))}"
                     " [dim](corrected)[/dim]"
                 )
             else:
@@ -1114,21 +1135,23 @@ class ChatPanel(Vertical):
             reg_text = "[bold]Register:[/bold] [dim]—[/dim]"
         self.query_one("#chat-register", Static).update(reg_text)
 
-        active = [t for t in self._reader.threads() if t.get("status") == "active"]
+        active = [t for t in threads if t.get("status") == "active"]
         if active:
             lines = ["[bold]Active threads:[/bold]"]
             for t in active:
-                lines.append(f"  {t.get('title', '—')} [{t.get('status', '')}]")
+                title = escape(str(t.get("title", "—")))
+                lines.append(f"  {title} [active]")
             self.query_one("#chat-threads", Static).update("\n".join(lines))
         else:
             self.query_one("#chat-threads", Static).update(
                 "[bold]Active threads:[/bold] [dim]none[/dim]"
             )
 
-        ds = self._reader.daemon_self()
         if ds:
             fascs = ds.get("current_fascinations") or []
-            topics = [f.get("topic", str(f)) for f in fascs] if fascs else []
+            topics = (
+                [escape(str(f.get("topic", str(f)))) for f in fascs] if fascs else []
+            )
             fasc_text = (
                 "[bold]Fascinations:[/bold] " + ", ".join(topics)
                 if topics
@@ -1138,7 +1161,6 @@ class ChatPanel(Vertical):
             fasc_text = "[bold]Fascinations:[/bold] [dim]—[/dim]"
         self.query_one("#chat-fascinations", Static).update(fasc_text)
 
-        holding = self._reader.holding()
         total = len(holding)
         if total > 0:
             counts: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
@@ -1198,7 +1220,7 @@ class KaiDevtoolsApp(App[None]):
         self,
         reader: DaemonStateReader,
         action_client: ActionClient,
-        conv_url: str = "http://localhost:9272",
+        conv_url: str = DEFAULT_CONV_URL,
     ) -> None:
         super().__init__()
         self._reader = reader

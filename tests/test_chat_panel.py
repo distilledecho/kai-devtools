@@ -6,6 +6,7 @@ import asyncio
 import json
 import urllib.error
 import urllib.request
+from http.client import HTTPMessage
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -43,8 +44,8 @@ def _make_ok_response(content: str) -> Any:
 
 async def _poll_for(condition: Any, timeout: float = 2.0) -> bool:
     """Poll condition() with small sleeps, returning True if it becomes True."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
         await asyncio.sleep(0.05)
         if condition():
             return True
@@ -173,11 +174,7 @@ def test_http_error_shows_inline_error(data_dir: Path) -> None:
 
     def fake_urlopen(req: urllib.request.Request, timeout: int | None = None) -> Any:
         raise urllib.error.HTTPError(
-            req.full_url,
-            503,
-            "Service Unavailable",
-            {},
-            None,  # type: ignore[arg-type]
+            req.full_url, 503, "Service Unavailable", HTTPMessage(), None
         )
 
     async def run() -> None:

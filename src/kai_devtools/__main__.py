@@ -60,7 +60,7 @@ def main(args: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--conv-url",
         metavar="URL",
-        default="http://localhost:9272",
+        default=None,
         help="Base URL for the conversation server (default: http://localhost:9272).",
     )
     parsed = parser.parse_args(args)
@@ -72,12 +72,13 @@ def main(args: Sequence[str] | None = None) -> None:
 
     # Lazy imports so that tests that only parse --version never import Textual.
     from ._action_client import ActionClient
-    from ._app import KaiDevtoolsApp
+    from ._app import DEFAULT_CONV_URL, KaiDevtoolsApp
     from ._reader import DaemonStateReader
 
     reader = DaemonStateReader(data_dir)
     client = ActionClient(base_url=base_url)
-    app = KaiDevtoolsApp(reader, client, conv_url=parsed.conv_url)
+    conv_url = parsed.conv_url if parsed.conv_url is not None else DEFAULT_CONV_URL
+    app = KaiDevtoolsApp(reader, client, conv_url=conv_url)
     app.run()
 
 
