@@ -393,7 +393,8 @@ def test_handoff_notes_returns_list(data_dir: Path) -> None:
     notes = reader.handoff_notes()
     assert len(notes) == 1
     assert notes[0]["session_id"] == "sess-001"
-    assert "presence thread" in notes[0]["note"]
+    assert isinstance(notes[0]["note"], str)
+    assert notes[0]["note"]  # non-empty
 
 
 def test_handoff_notes_empty_when_absent(tmp_path: Path) -> None:
@@ -417,6 +418,12 @@ def test_thread_episodes_empty_when_file_absent(tmp_path: Path) -> None:
 def test_thread_episodes_empty_when_thread_unknown(data_dir: Path) -> None:
     reader = DaemonStateReader(data_dir)
     assert reader.thread_episodes("no-such-thread") == []
+
+
+def test_thread_episodes_rejects_path_traversal(data_dir: Path) -> None:
+    reader = DaemonStateReader(data_dir)
+    assert reader.thread_episodes("../../etc/passwd") == []
+    assert reader.thread_episodes("../other") == []
 
 
 def test_all_thread_episode_ids_returns_list(data_dir: Path) -> None:

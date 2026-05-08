@@ -204,6 +204,7 @@ class DaemonStateReader:
 
     @property
     def _episodic_dir(self) -> Path:
+        """data/episodic/ — episodic session records written at session end."""
         return self._data / "episodic"
 
     def session_records(self) -> list[dict[str, Any]]:
@@ -216,6 +217,8 @@ class DaemonStateReader:
 
     def thread_episodes(self, thread_id: str) -> list[dict[str, Any]]:
         """Read data/episodic/thread_episodes/{thread_id}.jsonl."""
+        if any(c in thread_id for c in ("/", "\\", "..")):
+            return []
         return self._read_jsonl(
             self._episodic_dir / "thread_episodes" / f"{thread_id}.jsonl"
         )
