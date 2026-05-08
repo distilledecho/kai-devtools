@@ -57,6 +57,12 @@ def main(args: Sequence[str] | None = None) -> None:
         default="127.0.0.1",
         help="Host for the daemon action API (default: 127.0.0.1).",
     )
+    parser.add_argument(
+        "--conv-url",
+        metavar="URL",
+        default="http://localhost:9272",
+        help="Base URL for the conversation server (default: http://localhost:9272).",
+    )
     parsed = parser.parse_args(args)
 
     data_dir = (
@@ -71,7 +77,7 @@ def main(args: Sequence[str] | None = None) -> None:
 
     reader = DaemonStateReader(data_dir)
     client = ActionClient(base_url=base_url)
-    app = KaiDevtoolsApp(reader, client)
+    app = KaiDevtoolsApp(reader, client, conv_url=parsed.conv_url)
     app.run()
 
 
