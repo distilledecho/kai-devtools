@@ -199,6 +199,35 @@ class DaemonStateReader:
         return [i for i in self.borderline_pool() if i.get("status") == "pending"]
 
     # ------------------------------------------------------------------
+    # 14. Episodic session data — data/episodic/
+    # ------------------------------------------------------------------
+
+    @property
+    def _episodic_dir(self) -> Path:
+        return self._data / "episodic"
+
+    def session_records(self) -> list[dict[str, Any]]:
+        """Read data/episodic/session_records.jsonl."""
+        return self._read_jsonl(self._episodic_dir / "session_records.jsonl")
+
+    def handoff_notes(self) -> list[dict[str, Any]]:
+        """Read data/episodic/handoff_notes.jsonl."""
+        return self._read_jsonl(self._episodic_dir / "handoff_notes.jsonl")
+
+    def thread_episodes(self, thread_id: str) -> list[dict[str, Any]]:
+        """Read data/episodic/thread_episodes/{thread_id}.jsonl."""
+        return self._read_jsonl(
+            self._episodic_dir / "thread_episodes" / f"{thread_id}.jsonl"
+        )
+
+    def all_thread_episode_ids(self) -> list[str]:
+        """Return list of thread_ids that have episode files."""
+        episodes_dir = self._episodic_dir / "thread_episodes"
+        if not episodes_dir.exists():
+            return []
+        return sorted(p.stem for p in episodes_dir.glob("*.jsonl"))
+
+    # ------------------------------------------------------------------
     # Config helper — read daemon-memory-server.yaml for server URL
     # ------------------------------------------------------------------
 

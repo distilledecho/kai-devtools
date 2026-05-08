@@ -14,6 +14,7 @@ def data_dir(tmp_path: Path) -> Path:
     """Minimal populated data/ directory that all readers can operate on."""
     state = tmp_path / "daemon_state"
     logs = tmp_path / "logs"
+    episodic = tmp_path / "episodic"
     for d in (
         state,
         logs,
@@ -22,6 +23,8 @@ def data_dir(tmp_path: Path) -> Path:
         state / "threads",
         state / "pickup_notes",
         state / "memory_queue",
+        episodic,
+        episodic / "thread_episodes",
     ):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -234,6 +237,61 @@ def data_dir(tmp_path: Path) -> Path:
     # memory_queue: one queued item
     (state / "memory_queue" / "queued_session.yaml").write_text(
         yaml.dump({"type": "session_record", "session_id": "s1"})
+    )
+
+    # episodic/session_records.jsonl
+    session_recs = [
+        {
+            "session_id": "sess-001",
+            "started_at": "2026-04-05T10:00:00+00:00",
+            "ended_at": "2026-04-05T11:00:00+00:00",
+            "summary": "First session.",
+        },
+        {
+            "session_id": "sess-002",
+            "started_at": "2026-04-06T10:00:00+00:00",
+            "ended_at": "2026-04-06T11:30:00+00:00",
+            "summary": "Second session.",
+        },
+    ]
+    (episodic / "session_records.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in session_recs) + "\n"
+    )
+
+    # episodic/handoff_notes.jsonl
+    handoff_recs = [
+        {
+            "session_id": "sess-001",
+            "created_at": "2026-04-05T11:00:00+00:00",
+            "note": "Pick up where we left off on the presence thread.",
+        }
+    ]
+    (episodic / "handoff_notes.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in handoff_recs) + "\n"
+    )
+
+    # episodic/thread_episodes/
+    ep_thread_a = [
+        {
+            "episode_id": "ep-001",
+            "thread_id": "thread-abc",
+            "session_id": "sess-001",
+            "summary": "Initial exploration.",
+        }
+    ]
+    ep_thread_b = [
+        {
+            "episode_id": "ep-002",
+            "thread_id": "thread-xyz",
+            "session_id": "sess-002",
+            "summary": "Follow-up.",
+        }
+    ]
+    (episodic / "thread_episodes" / "thread-abc.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in ep_thread_a) + "\n"
+    )
+    (episodic / "thread_episodes" / "thread-xyz.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in ep_thread_b) + "\n"
     )
 
     return tmp_path

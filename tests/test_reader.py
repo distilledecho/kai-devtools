@@ -54,6 +54,10 @@ def test_reader_never_writes_to_data_dir(
     reader.inference_calls()
     reader.memory_server_config()
     reader.memory_server_url()
+    reader.session_records()
+    reader.handoff_notes()
+    reader.thread_episodes("thread-abc")
+    reader.all_thread_episode_ids()
 
     assert writes == [], (
         f"DaemonStateReader wrote directly to data dir (violates constraint): {writes}"
@@ -364,3 +368,63 @@ def test_memory_server_url_from_config(tmp_path: Path) -> None:
     (tmp_path / "daemon-memory-server.yaml").write_text(yaml.dump(cfg))
     reader = DaemonStateReader(data)
     assert reader.memory_server_url() == "http://192.168.1.5:9000"
+
+
+# ---------------------------------------------------------------------------
+# Episodic session data
+# ---------------------------------------------------------------------------
+
+
+def test_session_records_returns_list(data_dir: Path) -> None:
+    reader = DaemonStateReader(data_dir)
+    records = reader.session_records()
+    assert len(records) == 2
+    assert records[0]["session_id"] == "sess-001"
+    assert records[1]["session_id"] == "sess-002"
+
+
+def test_session_records_empty_when_absent(tmp_path: Path) -> None:
+    reader = DaemonStateReader(tmp_path)
+    assert reader.session_records() == []
+
+
+def test_handoff_notes_returns_list(data_dir: Path) -> None:
+    reader = DaemonStateReader(data_dir)
+    notes = reader.handoff_notes()
+    assert len(notes) == 1
+    assert notes[0]["session_id"] == "sess-001"
+    assert "presence thread" in notes[0]["note"]
+
+
+def test_handoff_notes_empty_when_absent(tmp_path: Path) -> None:
+    reader = DaemonStateReader(tmp_path)
+    assert reader.handoff_notes() == []
+
+
+def test_thread_episodes_returns_list(data_dir: Path) -> None:
+    reader = DaemonStateReader(data_dir)
+    episodes = reader.thread_episodes("thread-abc")
+    assert len(episodes) == 1
+    assert episodes[0]["thread_id"] == "thread-abc"
+    assert episodes[0]["episode_id"] == "ep-001"
+
+
+def test_thread_episodes_empty_when_file_absent(tmp_path: Path) -> None:
+    reader = DaemonStateReader(tmp_path)
+    assert reader.thread_episodes("thread-abc") == []
+
+
+def test_thread_episodes_empty_when_thread_unknown(data_dir: Path) -> None:
+    reader = DaemonStateReader(data_dir)
+    assert reader.thread_episodes("no-such-thread") == []
+
+
+def test_all_thread_episode_ids_returns_list(data_dir: Path) -> None:
+    reader = DaemonStateReader(data_dir)
+    ids = reader.all_thread_episode_ids()
+    assert ids == ["thread-abc", "thread-xyz"]
+
+
+def test_all_thread_episode_ids_empty_when_dir_absent(tmp_path: Path) -> None:
+    reader = DaemonStateReader(tmp_path)
+    assert reader.all_thread_episode_ids() == []
